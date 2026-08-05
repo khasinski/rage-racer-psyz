@@ -1,8 +1,15 @@
 #include <gtest/gtest.h>
 
-extern "C" __attribute__((weak)) void target_setup(void) {}
-extern "C" __attribute__((weak)) void target_skips(void) {}
-extern "C" __attribute__((weak)) void target_report(void) {}
+// Only the PSP target supplies these hooks (tests/target/target_psp.cpp);
+// every other platform builds against the stubs below. MSVC has no weak
+// symbols, so the choice has to be made by the preprocessor.
+#ifdef __PSP__
+extern "C" void target_setup(void);
+extern "C" void target_report(void);
+#else
+extern "C" void target_setup(void) {}
+extern "C" void target_report(void) {}
+#endif
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
