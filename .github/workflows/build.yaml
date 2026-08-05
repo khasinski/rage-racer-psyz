@@ -119,8 +119,16 @@ jobs:
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libGLEW.so.2.2 \
                       /usr/lib/x86_64-linux-gnu/libGLEW.so.2.3
           echo "$HOME/ppsspp-bin" >> "$GITHUB_PATH"
-          ldd "$HOME/ppsspp-bin/PPSSPPHeadless" | grep -i "not found" && exit 1
-          "$HOME/ppsspp-bin/PPSSPPHeadless" --help > /dev/null
+          if ldd "$HOME/ppsspp-bin/PPSSPPHeadless" | grep -qi "not found"; then
+            ldd "$HOME/ppsspp-bin/PPSSPPHeadless"
+            exit 1
+          fi
+          status=0
+          "$HOME/ppsspp-bin/PPSSPPHeadless" --help > /dev/null || status=$?
+          if [ "$status" -gt 1 ]; then
+            echo "PPSSPPHeadless failed to start (exit $status)"
+            exit 1
+          fi
       - name: Test PsyZ on PSP
         working-directory: psyz/
         run: make test-psp-emu
