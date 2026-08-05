@@ -1,7 +1,7 @@
 CMAKE_GEN ?= Ninja
 CMAKE_BUILD_TYPE ?= Release
 
-.PHONY: all clean format test test-wine help
+.PHONY: all clean format test test-psp-emu test-psp-hw test-wine help
 
 all: build/native/libpsyz.a
 
@@ -22,9 +22,9 @@ test:
 	cmake -G$(CMAKE_GEN) -DGTE_USE_HW_SQRT=ON -DCMAKE_BUILD_TYPE=Debug -S tests/ -B tests/build/sdl3-gpu-hw
 	cmake --build tests/build/sdl3-gpu-hw
 ifeq ($(UNAME_S),Linux)
-	cd tests/build && SDL_VIDEODRIVER=offscreen ./sdl3-gpu-hw/psyz_tests
+	cd tests && SDL_VIDEODRIVER=offscreen ./build/sdl3-gpu-hw/psyz_tests
 else
-	cd tests/build && ./sdl3-gpu-hw/psyz_tests
+	cd tests && ./build/sdl3-gpu-hw/psyz_tests
 endif
 
 ifneq ($(UNAME_S),Darwin)
@@ -32,17 +32,28 @@ ifneq ($(UNAME_S),Darwin)
 	cmake -G$(CMAKE_GEN) -DPSYZ_RENDERER=sdl3_gl -DGTE_USE_HW_SQRT=OFF -DCMAKE_BUILD_TYPE=Debug -S tests/ -B tests/build/sdl3-gl-sw
 	cmake --build tests/build/sdl3-gl-sw
 ifeq ($(UNAME_S),Linux)
-	cd tests/build && SDL_VIDEODRIVER=offscreen ./sdl3-gl-sw/psyz_tests --gtest_filter='gpu_Test.*'
+	cd tests && SDL_VIDEODRIVER=offscreen ./build/sdl3-gl-sw/psyz_tests --gtest_filter='gpu_Test.*'
 else
-	cd tests/build && ./sdl3-gl-sw/psyz_tests --gtest_filter='gpu_Test.*'
+	cd tests && ./build/sdl3-gl-sw/psyz_tests --gtest_filter='gpu_Test.*'
 endif
 endif
+
+PSP_TEST_CMAKE = cmake -G$(CMAKE_GEN) -DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/src/psp/psp.cmake -DCMAKE_BUILD_TYPE=Debug -S tests/ -B tests/build/psp
+test-psp-emu:
+	$(PSP_TEST_CMAKE) -DBUILD_PRX=OFF -DIS_PPSSPP_EMU=1
+	cmake --build tests/build/psp
+	tests/target/runner_psp.py emu
+
+test-psp-hw:
+	$(PSP_TEST_CMAKE) -DBUILD_PRX=ON
+	cmake --build tests/build/psp
+	tests/target/runner_psp.py hw
 
 test-wine:
 	@mkdir -p tests/build/wine
 	cmake -G$(CMAKE_GEN) -DCMAKE_TOOLCHAIN_FILE=../cmake/windows-x86_64.cmake -DCMAKE_BUILD_TYPE=Debug -S tests/ -B tests/build/wine
 	cmake --build tests/build/wine
-	cd tests/build && WINEPATH="/usr/x86_64-w64-mingw32/bin;build/sdl" WINEDEBUG=-all SDL_VIDEODRIVER=offscreen wine ./wine/psyz_tests.exe
+	cd tests && WINEPATH="/usr/x86_64-w64-mingw32/bin;build/wine/build/sdl" WINEDEBUG=-all SDL_VIDEODRIVER=offscreen wine ./build/wine/psyz_tests.exe
 
 clean:
 	rm -rf build tests/build

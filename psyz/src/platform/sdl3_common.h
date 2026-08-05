@@ -29,9 +29,15 @@ static void PlatformBackend_SetDriverVsync(bool enable);
 static void PlatformBackend_Present(void);
 static void QuitPlatform(void);
 
+#ifndef PSYZ_TITLE
+#define PSYZ_TITLE "PSY-Z"
+#endif
+static char window_title[0x100] = {PSYZ_TITLE};
+_Static_assert(sizeof(PSYZ_TITLE) <= sizeof(window_title),
+               "PSYZ_TITLE exceeds max allowed characters");
+
 // shared window/platform state
 static SDL_Window* sdl3_window = NULL;
-static char window_title[0x100] = {"PSY-Z"};
 static bool is_window_visible = false;
 static bool is_platform_initialized = false;
 static bool is_platform_init_successful = false;
@@ -210,8 +216,15 @@ void Psyz_SetTitle(const char* str) {
     }
 }
 
-void Psyz_GetWindowSize(int* width, int* height) {
-    SDL_GetWindowSize(sdl3_window, width, height);
+PsyzSize Psyz_VideoGetDisplaySize(void) {
+    PsyzSize s = {0, 0};
+    SDL_GetWindowSize(sdl3_window, &s.w, &s.h);
+    return s;
+}
+
+void Psyz_VideoSetDrawArea(PsyzRect rect) {
+    // not usable on SDL3, consoles only
+    (void)rect;
 }
 
 static double GetElapsedMicroseconds(Uint64 start, Uint64 end) {
