@@ -647,6 +647,40 @@ TEST_F(gpu_Test, clear_screen_draw_offset_bugfix) {
     AssertFrame("clear_screen_draw_offset_bugfix");
 }
 
+TEST_F(gpu_Test, opaque_texture_zero_texel_preserves_framebuffer) {
+    RECT texture_rect = {512, 0, 1, 1};
+    RECT clut_rect = {0, 1, 16, 1};
+    RECT sample_rect = {16, 16, 2, 1};
+    u_short texture_word = 0;
+    u_short palette[16] = {};
+    u_long before = 0;
+    u_long after = 0;
+
+    ClearImage(&cdb->draw.clip, 60, 120, 120);
+    LoadImage(&texture_rect, reinterpret_cast<u_long*>(&texture_word));
+    LoadImage(&clut_rect, reinterpret_cast<u_long*>(palette));
+    DrawSync(0);
+    StoreImage(&sample_rect, &before);
+    DrawSync(0);
+
+    SetPolyFT4(&cdb->ft4[0]);
+    setRGB0(&cdb->ft4[0], 0x80, 0x80, 0x80);
+    setXYWH(&cdb->ft4[0], 16, 16, 2, 1);
+    setUVWH(&cdb->ft4[0], 0, 0, 2, 1);
+    cdb->ft4[0].clut = GetClut(clut_rect.x, clut_rect.y);
+    cdb->ft4[0].tpage = GetTPage(0, 0, texture_rect.x, texture_rect.y);
+
+    ClearOTag(cdb->ot, OTSIZE);
+    AddPrim(cdb->ot, &cdb->ft4[0]);
+    DrawOTag(cdb->ot);
+    DrawSync(0);
+    StoreImage(&sample_rect, &after);
+    DrawSync(0);
+
+    EXPECT_NE(before, 0u);
+    EXPECT_EQ(after, before);
+}
+
 // TODO: test is actually failing
 TEST_F(gpu_Test, load_move_image_priority) {
     TIM_IMAGE tim;

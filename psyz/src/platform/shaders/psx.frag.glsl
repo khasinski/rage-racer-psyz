@@ -64,8 +64,9 @@ void main() {
     }
     // check for full transparency
     if (texColor == vec4(0, 0, 0, 0)) {
-        FragColor = vec4(0);
-        return;
+        // PS1 texel 0000h is a color key: it leaves the framebuffer untouched,
+        // even when the primitive itself is not using semi-transparency.
+        discard;
     }
     // check for setSemiTrans(p, 1)
     bool isSemiTrans = vertexColor.a < 0.75;
