@@ -179,7 +179,8 @@ int Psyz_VideoSetAspectMode(PsyzAspectMode mode) {
 }
 
 static Uint32 elapsed_from_beginning = 0;
-static Uint32 last_vsync = 0;
+static Uint64 last_vsync_counter = 0;
+static unsigned limitless_vsync_units = 0;
 
 // frame pacing state
 static double target_frame_rate = VSYNC_NTSC;
@@ -295,9 +296,9 @@ static void UpdateTargetFramerate(double fps) {
 // Initialize the timing/vsync state. Call once at the end of InitPlatform.
 static void Sdl3Common_TimingInit(void) {
     elapsed_from_beginning = (Uint32)SDL_GetTicks();
-    last_vsync = elapsed_from_beginning;
     perf_frequency = SDL_GetPerformanceFrequency();
     last_frame_time = SDL_GetPerformanceCounter();
+    last_vsync_counter = last_frame_time;
     UpdateTargetFramerate(VSYNC_NTSC);
 }
 
@@ -354,19 +355,33 @@ static void WaitForNextFrame(void) {
 }
 
 int Psyz_VideoVSync(int mode) {
-    Uint32 cur;
     unsigned short ret;
-    cur = (Uint32)SDL_GetTicks();
-    if (mode >= 0) {
-        ret = (unsigned short)(cur - last_vsync);
-    } else {
+    if (mode < 0) {
         ret = (unsigned short)gpu_stats.total_frames;
+    } else if (mode > 0) {
+        if (vsync_mode == PSYZ_VSYNC_LIMITLESS) {
+            /* Deterministic CI/smoke mode: advance one emulated VBlank for
+             * each poll instead of busy-waiting on host wall time. */
+            if (limitless_vsync_units < 0x180) {
+                limitless_vsync_units += 0x80;
+            }
+            ret = (unsigned short)limitless_vsync_units;
+        } else {
+            Uint64 now = SDL_GetPerformanceCounter();
+            double elapsed_us =
+                GetElapsedMicroseconds(last_vsync_counter, now);
+            ret = (unsigned short)(elapsed_us * 256.0 /
+                                   target_frame_time_us);
+        }
+    } else {
+        ret = 0;
     }
-    last_vsync = cur;
     if (mode == 0) {
         PlatformBackend_Present();
         PollEvents();
         WaitForNextFrame();
+        last_vsync_counter = SDL_GetPerformanceCounter();
+        limitless_vsync_units = 0;
     }
     return ret;
 }
