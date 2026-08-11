@@ -1241,10 +1241,23 @@ int Draw_PushPrim(u_long* packets, int max_len) {
 }
 
 void Draw_SetAreaStart(int x, int y) {
+    if (getenv("RAGE_GPU_TRACE_AREA") != NULL) {
+        fprintf(stderr,
+                "gpu-area-start next=%d,%d active=%d,%d,%d,%d pending=%d\n",
+                x, y, scissor_rect.x, scissor_rect.y, scissor_rect.w,
+                scissor_rect.h, n_vertices);
+    }
     draw_area_start.x = x;
     draw_area_start.y = y;
 }
 void Draw_SetAreaEnd(int x, int y) {
+    if (getenv("RAGE_GPU_TRACE_AREA") != NULL) {
+        fprintf(stderr,
+                "gpu-area-end next=%d,%d start=%d,%d active=%d,%d,%d,%d "
+                "pending=%d\n",
+                x, y, draw_area_start.x, draw_area_start.y, scissor_rect.x,
+                scissor_rect.y, scissor_rect.w, scissor_rect.h, n_vertices);
+    }
     draw_area_end.x = x;
     draw_area_end.y = y;
     UpdateScissor();
