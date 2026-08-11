@@ -905,6 +905,88 @@ static void Draw_EnqueueBuffer(int vertices, int indices) {
 // real hardware use XY coords as signed 11-bit
 static short s11(short v) { return (short)(((v & 0x7FF) ^ 1024) - 1024); }
 
+static unsigned long long gpu_trace_order;
+static unsigned long long gpu_trace_frame = ~0ULL;
+static unsigned long long gpu_trace_requested_frame;
+static int gpu_trace_x;
+static int gpu_trace_y;
+static bool gpu_trace_initialized;
+static bool gpu_trace_enabled;
+static bool gpu_trace_has_frame;
+
+static void InitGpuPrimitiveTrace(void) {
+    const char* point;
+    const char* frameText;
+    if (gpu_trace_initialized) return;
+    gpu_trace_initialized = true;
+    point = getenv("RAGE_GPU_TRACE_PIXEL");
+    frameText = getenv("RAGE_GPU_TRACE_FRAME");
+    gpu_trace_enabled = point != NULL &&
+                        sscanf(point, "%d,%d", &gpu_trace_x, &gpu_trace_y) == 2;
+    gpu_trace_has_frame = frameText != NULL;
+    if (gpu_trace_has_frame) {
+        gpu_trace_requested_frame = strtoull(frameText, NULL, 0);
+    }
+}
+
+static long TraceEdge(const Vertex* a, const Vertex* b, int x, int y,
+                      int offsetX, int offsetY) {
+    return (long)(b->x - a->x) * (y - (a->y + offsetY)) -
+           (long)(b->y - a->y) * (x - (a->x + offsetX));
+}
+
+static bool TracePointInTriangle(const Vertex* a, const Vertex* b,
+                                 const Vertex* c, int x, int y,
+                                 int offsetX, int offsetY) {
+    long area = TraceEdge(a, b, c->x + offsetX, c->y + offsetY,
+                          offsetX, offsetY);
+    long ab = TraceEdge(a, b, x, y, offsetX, offsetY);
+    long bc = TraceEdge(b, c, x, y, offsetX, offsetY);
+    long ca = TraceEdge(c, a, x, y, offsetX, offsetY);
+    return area != 0 && ((ab >= 0 && bc >= 0 && ca >= 0) ||
+                         (ab <= 0 && bc <= 0 && ca <= 0));
+}
+
+static void TraceGpuPrimitive(const Vertex* v, int count, int code,
+                              u16 tpage, u16 clut,
+                              int offsetX, int offsetY) {
+    unsigned long long frame = gpu_stats.total_frames;
+    unsigned long long order;
+    int x = gpu_trace_x;
+    int y = gpu_trace_y;
+    int i;
+    bool covered;
+
+    InitGpuPrimitiveTrace();
+    if (!gpu_trace_enabled) return;
+    x = gpu_trace_x;
+    y = gpu_trace_y;
+    if (frame != gpu_trace_frame) {
+        gpu_trace_frame = frame;
+        gpu_trace_order = 0;
+    }
+    order = gpu_trace_order++;
+    if (gpu_trace_has_frame && frame != gpu_trace_requested_frame) return;
+    covered = TracePointInTriangle(&v[0], &v[1], &v[2], x, y,
+                                   offsetX, offsetY);
+    if (!covered && count == 4) {
+        covered = TracePointInTriangle(&v[1], &v[3], &v[2], x, y,
+                                       offsetX, offsetY);
+    }
+    if (!covered) return;
+
+    fprintf(stderr,
+            "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
+            "tpage=%04x clut=%04x",
+            frame, order, x, y, code & 0xFF, tpage, clut);
+    for (i = 0; i < count; i++) {
+        fprintf(stderr, " v%d=%d,%d/%u,%u/%02x%02x%02x%02x",
+                i, v[i].x + offsetX, v[i].y + offsetY, v[i].u, v[i].v,
+                v[i].r, v[i].g, v[i].b, v[i].a);
+    }
+    fputc('\n', stderr);
+}
+
 static int writePacket(Vertex* v, int code, int n, u_long* packet, u16* pOut) {
     int w;
     if (!n) {
