@@ -165,8 +165,8 @@ static const char fragment_shader_body[] = {
     "    }\n"
     // check for full transparency
     "    if (texColor == vec4(0, 0, 0, 0)) {\n"
-    "        FragColor = vec4(0);\n"
-    "        return;\n"
+    // PS1 texel 0000h is a color key and must not touch the framebuffer.
+    "        discard;\n"
     "    }\n"
     // check for setSemiTrans(p, 1)
     "    bool isSemiTrans = vertexColor.a < 0.75;"
