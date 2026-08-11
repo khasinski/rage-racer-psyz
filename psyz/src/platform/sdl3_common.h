@@ -360,18 +360,22 @@ int Psyz_VideoVSync(int mode) {
         ret = (unsigned short)gpu_stats.total_frames;
     } else if (mode > 0) {
         if (vsync_mode == PSYZ_VSYNC_LIMITLESS) {
-            /* Deterministic CI/smoke mode: advance one emulated VBlank for
-             * each poll instead of busy-waiting on host wall time. */
-            if (limitless_vsync_units < 0x180) {
-                limitless_vsync_units += 0x80;
+            /* The PS1 root counter observed by VSync(1) changes only on a
+             * VBlank boundary.  Advance one complete 1/256-VBlank unit per
+             * deterministic poll; returning half-VBlank values lets a 0x180
+             * race threshold finish after 1.5 fields instead of the retail
+             * two. */
+            if (limitless_vsync_units < 0x200) {
+                limitless_vsync_units += 0x100;
             }
             ret = (unsigned short)limitless_vsync_units;
         } else {
             Uint64 now = SDL_GetPerformanceCounter();
             double elapsed_us =
                 GetElapsedMicroseconds(last_vsync_counter, now);
-            ret = (unsigned short)(elapsed_us * 256.0 /
-                                   target_frame_time_us);
+            unsigned whole_vblanks =
+                (unsigned)(elapsed_us / target_frame_time_us);
+            ret = (unsigned short)(whole_vblanks * 0x100u);
         }
     } else {
         ret = 0;
@@ -910,23 +914,39 @@ static unsigned long long gpu_trace_frame = ~0ULL;
 static unsigned long long gpu_trace_requested_frame;
 static int gpu_trace_x;
 static int gpu_trace_y;
+static u16 gpu_trace_tpage;
+static u16 gpu_trace_clut;
 static bool gpu_trace_initialized;
 static bool gpu_trace_enabled;
+static bool gpu_trace_has_point;
 static bool gpu_trace_has_frame;
+static bool gpu_trace_has_tpage;
+static bool gpu_trace_has_clut;
 
 static void InitGpuPrimitiveTrace(void) {
     const char* point;
     const char* frameText;
+    const char* tpageText;
+    const char* clutText;
     if (gpu_trace_initialized) return;
     gpu_trace_initialized = true;
     point = getenv("RAGE_GPU_TRACE_PIXEL");
     frameText = getenv("RAGE_GPU_TRACE_FRAME");
-    gpu_trace_enabled = point != NULL &&
-                        sscanf(point, "%d,%d", &gpu_trace_x, &gpu_trace_y) == 2;
+    tpageText = getenv("RAGE_GPU_TRACE_TPAGE");
+    clutText = getenv("RAGE_GPU_TRACE_CLUT");
+    gpu_trace_has_point = point != NULL &&
+                          sscanf(point, "%d,%d", &gpu_trace_x,
+                                 &gpu_trace_y) == 2;
     gpu_trace_has_frame = frameText != NULL;
+    gpu_trace_has_tpage = tpageText != NULL;
+    gpu_trace_has_clut = clutText != NULL;
+    gpu_trace_enabled = gpu_trace_has_point || gpu_trace_has_tpage ||
+                        gpu_trace_has_clut;
     if (gpu_trace_has_frame) {
         gpu_trace_requested_frame = strtoull(frameText, NULL, 0);
     }
+    if (gpu_trace_has_tpage) gpu_trace_tpage = strtoul(tpageText, NULL, 16);
+    if (gpu_trace_has_clut) gpu_trace_clut = strtoul(clutText, NULL, 16);
 }
 
 static long TraceEdge(const Vertex* a, const Vertex* b, int x, int y,
@@ -967,18 +987,30 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     }
     order = gpu_trace_order++;
     if (gpu_trace_has_frame && frame != gpu_trace_requested_frame) return;
-    covered = TracePointInTriangle(&v[0], &v[1], &v[2], x, y,
-                                   offsetX, offsetY);
-    if (!covered && count == 4) {
-        covered = TracePointInTriangle(&v[1], &v[3], &v[2], x, y,
+    if (gpu_trace_has_tpage && (tpage & 0x9FF) != gpu_trace_tpage) return;
+    if (gpu_trace_has_clut && clut != gpu_trace_clut) return;
+    covered = !gpu_trace_has_point;
+    if (gpu_trace_has_point) {
+        covered = TracePointInTriangle(&v[0], &v[1], &v[2], x, y,
                                        offsetX, offsetY);
+        if (!covered && count == 4) {
+            covered = TracePointInTriangle(&v[1], &v[3], &v[2], x, y,
+                                           offsetX, offsetY);
+        }
     }
     if (!covered) return;
 
-    fprintf(stderr,
-            "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
-            "tpage=%04x clut=%04x",
-            frame, order, x, y, code & 0xFF, tpage, clut);
+    if (gpu_trace_has_point) {
+        fprintf(stderr,
+                "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
+                "tpage=%04x clut=%04x",
+                frame, order, x, y, code & 0xFF, tpage, clut);
+    } else {
+        fprintf(stderr,
+                "gpu-prim frame=%llu order=%llu code=%02x "
+                "tpage=%04x clut=%04x",
+                frame, order, code & 0xFF, tpage, clut);
+    }
     for (i = 0; i < count; i++) {
         fprintf(stderr, " v%d=%d,%d/%u,%u/%02x%02x%02x%02x",
                 i, v[i].x + offsetX, v[i].y + offsetY, v[i].u, v[i].v,
