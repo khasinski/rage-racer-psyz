@@ -644,7 +644,19 @@ static void PlatformBackend_Present(void) {
                 .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
                 .filter = SDL_GPU_FILTER_NEAREST,
             };
-            SDL_BlitGPUTexture(cmd, &blit);
+            if (disp_on) {
+                SDL_BlitGPUTexture(cmd, &blit);
+            } else {
+                const SDL_GPUColorTargetInfo target = {
+                    .texture = swapchain,
+                    .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
+                    .load_op = SDL_GPU_LOADOP_CLEAR,
+                    .store_op = SDL_GPU_STOREOP_STORE,
+                };
+                SDL_GPURenderPass* pass =
+                    SDL_BeginGPURenderPass(cmd, &target, 1, NULL);
+                SDL_EndGPURenderPass(pass);
+            }
             if (overlay_frame_cb) {
                 overlay_frame_cb();
             }
@@ -817,6 +829,48 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
     return pixels;
 }
 
+int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
+    const int y_offset = (240 - h) / 2;
+    if (!pixels || w <= 0 || h <= 0 || w > VRAM_W || h > 240 ||
+        !device || !vram_render) {
+        return 0;
+    }
+    SDL_GPUCommandBuffer* cmd = AcquireCmd();
+    if (!cmd) return 0;
+    u8* map = SDL_MapGPUTransferBuffer(device, tex_upload_transfer, true);
+    if (!map) return 0;
+    for (int i = 0; i < w * h; i++) {
+        map[i * 4 + 0] = pixels[i * 3 + 0];
+        map[i * 4 + 1] = pixels[i * 3 + 1];
+        map[i * 4 + 2] = pixels[i * 3 + 2];
+        map[i * 4 + 3] = 255;
+    }
+    SDL_UnmapGPUTransferBuffer(device, tex_upload_transfer);
+    SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
+    const SDL_GPUTextureTransferInfo src = {
+        .transfer_buffer = tex_upload_transfer,
+        .pixels_per_row = (Uint32)w,
+        .rows_per_layer = (Uint32)h,
+    };
+    for (int page = 0; page < 2; page++) {
+        const SDL_GPUTextureRegion dst = {
+            .texture = vram_render,
+            .x = 0,
+            .y = (Uint32)(page * 240 + y_offset),
+            .w = (Uint32)w,
+            .h = (Uint32)h,
+            .d = 1,
+        };
+        SDL_UploadToGPUTexture(copy, &src, &dst, false);
+    }
+    SDL_EndGPUCopyPass(copy);
+    MarkVramDirty((SDL_Rect){0, y_offset, w, h});
+    MarkVramDirty((SDL_Rect){0, 240 + y_offset, w, h});
+    SyncNativeVramToScaled(0, y_offset, w, h);
+    SyncNativeVramToScaled(0, 240 + y_offset, w, h);
+    return 1;
+}
+
 static void UpdateScissor() {
     int width = draw_area_end.x - draw_area_start.x + 1;
     int height = draw_area_end.y - draw_area_start.y + 1;
@@ -863,7 +917,7 @@ static void ApplyDisplayPendingChanges() {
     if (cur_display_size.x != display_size.x ||
         cur_display_size.y != display_size.y || !is_window_visible) {
         if (!is_window_visible) {
-            SetWindowSizeInPixels(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
+            SetWindowLogicalSize(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
         }
         cur_display_size = display_size;
     }
@@ -884,30 +938,6 @@ void Draw_DisplayEnable(unsigned int on) {
     if (!on) {
         if (!sdl3_window && !InitPlatform()) {
             return;
-        }
-        // when display is on, clear background in black
-        SDL_GPUCommandBuffer* cmd = AcquireCmd();
-        if (!cmd) {
-            return;
-        }
-        const SDL_GPUColorTargetInfo target = {
-            .texture = vram_render,
-            .clear_color = {0, 0, 0, 1},
-            .load_op = SDL_GPU_LOADOP_CLEAR,
-            .store_op = SDL_GPU_STOREOP_STORE,
-        };
-        SDL_GPURenderPass* pass = SDL_BeginGPURenderPass(cmd, &target, 1, NULL);
-        SDL_EndGPURenderPass(pass);
-        if (internal_res > 1 && scaled_vram_render) {
-            const SDL_GPUColorTargetInfo scaled_target = {
-                .texture = scaled_vram_render,
-                .clear_color = {0, 0, 0, 1},
-                .load_op = SDL_GPU_LOADOP_CLEAR,
-                .store_op = SDL_GPU_STOREOP_STORE,
-            };
-            SDL_GPURenderPass* scaled_pass =
-                SDL_BeginGPURenderPass(cmd, &scaled_target, 1, NULL);
-            SDL_EndGPURenderPass(scaled_pass);
         }
     } else {
         ApplyDisplayPendingChanges();
@@ -984,8 +1014,10 @@ int Draw_PushPrim(u_long* packets, int max_len) {
     u16 tpage = -1, clut = -1, pad2, pad3;
     Vertex* v;
 
-    // to ensure we always have space, we pretend we want to allocate a quad
-    Draw_EnsureBufferWillNotOverflow(4, 6);
+    /* writePacket stores a Gouraud packet's following vertex color through
+     * v + 1.  On the final vertex that is a parser scratch write beyond the
+     * four vertices eventually enqueued, so reserve one extra slot. */
+    Draw_EnsureBufferWillNotOverflow(isGouraud ? 5 : 4, 6);
     v = vertex_cur;
     if (isShadeTex) {
         v->r = (unsigned char)(*packets >> 0);
@@ -1034,6 +1066,10 @@ int Draw_PushPrim(u_long* packets, int max_len) {
 
             if (isTextured) {
                 FixupFlipUV(vertex_cur, code & EXTRA_VERTEX);
+                /* The GPU latches the texture page carried by a textured
+                 * polygon. Later sprites have no tpage field and consume
+                 * that latched value. */
+                cur_tpage = tpage;
             } else {
                 clut = -1;
                 tpage = cur_tpage | TPAGE_NOTEXTURE;

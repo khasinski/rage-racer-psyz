@@ -46,8 +46,12 @@ static bool debug_show_vram = false;
 static bool is_fullscreen = false;
 
 // defaults to better support integer scaling
+#ifndef DEFAULT_FRONT_W
 #define DEFAULT_FRONT_W 1280
+#endif
+#ifndef DEFAULT_FRONT_H
 #define DEFAULT_FRONT_H 960
+#endif
 
 typedef struct {
     int w, h;
@@ -110,19 +114,18 @@ static bool is_pal = false;
 static PsyzAspectMode aspect_mode = PSYZ_ASPECT_DISPLAY;
 static WndSize wnd_size_in_pixels = {0, 0};
 
-static void SetWindowSizeInPixels(int width, int height) {
+static void SetWindowLogicalSize(int width, int height) {
     if (!sdl3_window) {
         return;
     }
-    wnd_size_in_pixels.w = width;
-    wnd_size_in_pixels.h = height;
-    float density = SDL_GetWindowPixelDensity(sdl3_window);
-    if (density <= 0.0f) {
-        density = 1.0f;
+    SDL_SetWindowSize(sdl3_window, width, height);
+    SDL_GetWindowSizeInPixels(
+        sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
+    if (getenv("RAGE_PORT_WINDOW_DEBUG") != NULL) {
+        INFOF("window logical=%dx%d pixels=%dx%d density=%.2f",
+              width, height, wnd_size_in_pixels.w, wnd_size_in_pixels.h,
+              SDL_GetWindowPixelDensity(sdl3_window));
     }
-    int actual_width = (int)(width / density + 0.5f);
-    int actual_height = (int)(height / density + 0.5f);
-    SDL_SetWindowSize(sdl3_window, actual_width, actual_height);
 }
 
 static float GetCurrentGameAspectRatio(int disp_w, int disp_h) {
@@ -133,6 +136,12 @@ static float GetCurrentGameAspectRatio(int disp_w, int disp_h) {
     }
     if (disp_h <= 0) {
         return 4.0f / 3.0f;
+    }
+    /* A 480-line PS1 framebuffer is interlaced: two fields make one
+     * 240-line picture.  Treating those stored field lines as square output
+     * pixels turns the intended 4:3 320x480 mode into a 2:3 image. */
+    if (disp_h > 288) {
+        disp_h /= 2;
     }
     return (float)disp_w / (float)disp_h;
 }
@@ -482,14 +491,50 @@ static u_long keyb_p1[] = {
     SDL_SCANCODE_DOWN,      // PAD_DOWN
     SDL_SCANCODE_LEFT,      // PAD_LEFT
 };
+/* SDL may deliver KEY_DOWN and KEY_UP in one event pump when a game frame is
+ * slow (notably during FMV decoding). Preserve every down transition for one
+ * pad sample so a short key tap cannot disappear between PS1 VSync polls. */
+static unsigned int keyboard_held_mask;
+static unsigned int keyboard_pressed_latch;
+
+static unsigned int KeyboardMaskForScancode(SDL_Scancode scancode) {
+    unsigned int mask = 0;
+    for (int i = 0; i < LEN(keyb_p1); i++) {
+        if ((SDL_Scancode)keyb_p1[i] == scancode) {
+            mask |= 1U << i;
+        }
+    }
+    return mask;
+}
+
+int Psyz_SetKeyboardKey(int button_index, const char* key_name) {
+    SDL_Scancode scancode;
+    if (button_index < 0 || button_index >= LEN(keyb_p1) || !key_name) {
+        return 0;
+    }
+    scancode = SDL_GetScancodeFromName(key_name);
+    if (scancode == SDL_SCANCODE_UNKNOWN) {
+        return 0;
+    }
+    keyb_p1[button_index] = (u_long)scancode;
+    if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
+        INFOF("keyboard binding index=%d name=%s scancode=%d", button_index,
+              key_name, (int)scancode);
+    }
+    return 1;
+}
 static unsigned int PadRead_Keyboard(u_long* config, int config_len) {
     const bool* keyb = SDL_GetKeyboardState(NULL);
-    unsigned int r = 0;
+    unsigned int r = keyboard_held_mask | keyboard_pressed_latch;
     for (int i = 0; i < config_len; i++) {
         if (keyb[config[i]]) {
             r |= 1UL << i;
         }
     }
+    if (r != 0 && getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
+        INFOF("keyboard pad mask=%04X", r);
+    }
+    keyboard_pressed_latch = 0;
     return r;
 }
 static unsigned int PadRead_Gamepad(struct Gamepad* g) {
@@ -703,6 +748,23 @@ static void SetFullScreen(bool isFullscreen) {
 
 static void PollEvents(void) {
     SDL_Event event;
+    static bool test_key_tap_sent;
+
+    if (!test_key_tap_sent) {
+        const char *test_key = getenv("RAGE_PORT_TEST_KEY_TAP");
+        if (test_key && test_key[0]) {
+            SDL_Scancode scancode = SDL_GetScancodeFromName(test_key);
+            if (scancode != SDL_SCANCODE_UNKNOWN) {
+                SDL_Event synthetic = {0};
+                synthetic.type = SDL_EVENT_KEY_DOWN;
+                synthetic.key.scancode = scancode;
+                SDL_PushEvent(&synthetic);
+                synthetic.type = SDL_EVENT_KEY_UP;
+                SDL_PushEvent(&synthetic);
+            }
+            test_key_tap_sent = true;
+        }
+    }
     while (SDL_PollEvent(&event)) {
         if (overlay_event_cb) {
             overlay_event_cb(&event);
@@ -722,9 +784,27 @@ static void PollEvents(void) {
                 sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
             break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-            SetWindowSizeInPixels(wnd_size_in_pixels.w, wnd_size_in_pixels.h);
+            SDL_GetWindowSizeInPixels(
+                sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
             break;
         case SDL_EVENT_KEY_DOWN:
+            {
+                unsigned int mask =
+                    KeyboardMaskForScancode(event.key.scancode);
+                if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
+                    INFOF("key mapped mask=%04X", mask);
+                }
+                keyboard_held_mask |= mask;
+                if (!event.key.repeat) {
+                    keyboard_pressed_latch |= mask;
+                }
+            }
+            if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
+                INFOF("key down scancode=%d name=%s repeat=%d",
+                      (int)event.key.scancode,
+                      SDL_GetScancodeName(event.key.scancode),
+                      event.key.repeat ? 1 : 0);
+            }
             if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
                 quit_requested = true;
             }
@@ -734,6 +814,10 @@ static void PollEvents(void) {
             if (event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat) {
                 SetFullScreen(!is_fullscreen);
             }
+            break;
+        case SDL_EVENT_KEY_UP:
+            keyboard_held_mask &=
+                ~KeyboardMaskForScancode(event.key.scancode);
             break;
         default:
             break;

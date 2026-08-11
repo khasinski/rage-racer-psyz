@@ -597,9 +597,12 @@ static void PlatformBackend_Present(void) {
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    glBlitFramebuffer(
-        src.x * n, (src.y + src.h) * n, (src.x + src.w) * n, src.y * n, dst.x,
-        dst.y, dst.x + dst.w, dst.y + dst.h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (disp_on) {
+        glBlitFramebuffer(
+            src.x * n, (src.y + src.h) * n, (src.x + src.w) * n, src.y * n,
+            dst.x, dst.y, dst.x + dst.w, dst.y + dst.h, GL_COLOR_BUFFER_BIT,
+            GL_NEAREST);
+    }
     if (overlay_frame_cb) {
         overlay_frame_cb();
     }
@@ -760,7 +763,7 @@ static void ApplyDisplayPendingChanges() {
     if (cur_display_size.x != display_size.x ||
         cur_display_size.y != display_size.y || !is_window_visible) {
         if (!is_window_visible) {
-            SetWindowSizeInPixels(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
+            SetWindowLogicalSize(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
         }
 
         cur_display_size = display_size;
@@ -792,17 +795,6 @@ void Draw_DisplayEnable(unsigned int on) {
         if (!sdl3_window && !InitPlatform()) {
             return;
         }
-        // when display is on, clear background in black
-        glClearColor(0, 0, 0, 1);
-        glDisable(GL_SCISSOR_TEST);
-        glBindFramebuffer(GL_FRAMEBUFFER, vram_fbo);
-        glClear(GL_COLOR_BUFFER_BIT);
-        if (internal_res > 1) {
-            glBindFramebuffer(GL_FRAMEBUFFER, scaled_vram_fbo);
-            glClear(GL_COLOR_BUFFER_BIT);
-        }
-        BindDrawFbo();
-        glEnable(GL_SCISSOR_TEST);
     } else {
         ApplyDisplayPendingChanges();
     }
@@ -958,6 +950,7 @@ int Draw_PushPrim(u_long* packets, int max_len) {
 
             if (isTextured) {
                 FixupFlipUV(vertex_cur, code & EXTRA_VERTEX);
+                cur_tpage = tpage;
             } else {
                 clut = -1;
                 tpage = cur_tpage | TPAGE_NOTEXTURE;

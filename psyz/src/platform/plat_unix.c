@@ -183,13 +183,15 @@ long my_erase(char* path) {
 #include <unistd.h>
 #include <sys/ioctl.h>
 int psyz_open(const char* devname, int flag) {
-    int oflag = O_RDONLY;
+    int oflag;
     if ((flag & (FREAD | FWRITE)) == (FREAD | FWRITE)) {
-        flag = O_RDWR;
+        oflag = O_RDWR;
     } else if (flag & FREAD) {
-        flag |= O_RDONLY;
+        oflag = O_RDONLY;
     } else if (flag & FWRITE) {
-        flag |= O_WRONLY;
+        oflag = O_WRONLY;
+    } else {
+        oflag = O_RDONLY;
     }
     if (flag & FNBLOCK) {
         DEBUGF("FNBLOCK ignored for %s", devname);

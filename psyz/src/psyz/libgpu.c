@@ -140,8 +140,9 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
     if (sizeof(u_long) == 4) {
         // fast path for 32-bit systems
         while (1) {
-            if (env->len > 0) {
-                DispatchPackets((u_long*)env->code, (int)env->len);
+            int env_len = getlen(env);
+            if (env_len > 0) {
+                DispatchPackets((u_long*)env->code, env_len);
             }
             if (isendprim(env)) {
                 break;
@@ -151,13 +152,16 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
         return 0;
     }
     while (1) {
-        if (queue_len + env->len > LEN(queue_buf)) {
-            if (env->len > 0x100) {
-                ERRORF("packet 0x%X long, likely corrupted", env->len);
-            }
-            INFOF("GPU queue full, calling exeque");
+        int env_len = getlen(env);
+        if (env_len > 0x100) {
+            ERRORF("packet %p is 0x%X words long, likely corrupted",
+                   (void *)env, env_len);
+            break;
+        }
+        if (queue_len + env_len > LEN(queue_buf)) {
             Psyz_GpuExeque();
-        } else if (sizeof(u_long) == 8) {
+        }
+        if (sizeof(u_long) == 8) {
             // Wow okay, this part is uuuugly...
             // Gpu code is usually written to a u_long array, which will work
             // fine on both 32-bit and 64-bit compiled code.
@@ -166,22 +170,30 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
             if (code >= 0x20 && code < 0x80) {
                 // it is a prim, we need to split
                 u32* prim_data = (u32*)env->code;
-                for (u_long i = 0; i < env->len; i++) {
+                for (int i = 0; i < env_len; i++) {
                     queue_buf[queue_len + i] = prim_data[i];
                 }
-            } else if (env->len > 0) {
+            } else if (env_len > 0) {
                 // TODO this is a temporary solution:
                 // if gpu commands get merged with primitives, this will not
                 // work
                 memcpy(queue_buf + queue_len, env->code,
-                       env->len * sizeof(u_long));
+                       (size_t)env_len * sizeof(u_long));
             }
         }
-        queue_len += (int)env->len;
+        queue_len += env_len;
         if (isendprim(env)) {
             break;
         }
-        env = (DR_ENV*)nextPrim(env);
+        {
+            DR_ENV* next = (DR_ENV*)nextPrim(env);
+            if (((uintptr_t)next & (sizeof(u32) - 1)) != 0) {
+                ERRORF("misaligned OT link %p after packet %p code=%02X len=%u",
+                       (void *)next, (void *)env, getcode(env), getlen(env));
+                break;
+            }
+            env = next;
+        }
     }
     return 0;
 }

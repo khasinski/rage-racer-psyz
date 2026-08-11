@@ -2,12 +2,15 @@
 #include <psyz/log.h>
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdatomic.h>
 
 #define N_CHANNELS 2
 #define SAMPLE_SIZE sizeof(short)
 
 static SDL_AudioStream* sdl_stream;
 static SDL_Mutex* mutex;
+static _Atomic unsigned long long rendered_frames;
+static _Atomic unsigned long long rendered_energy;
 
 // Audio callback: SDL pulls audio from the SPU via this callback.
 // The audio driver synchronizes the SPU based on the pulled samples.
@@ -26,6 +29,13 @@ static void SDLCALL audio_callback(void* userdata, SDL_AudioStream* stream,
         if (batch > 2048)
             batch = 2048;
         Psyz_SpuPullSamples(buf, batch);
+        unsigned long long energy = 0;
+        for (int i = 0; i < batch * N_CHANNELS; i++) {
+            int sample = buf[i];
+            energy += (unsigned long long)(sample < 0 ? -sample : sample);
+        }
+        atomic_fetch_add(&rendered_frames, (unsigned long long)batch);
+        atomic_fetch_add(&rendered_energy, energy);
         SDL_PutAudioStreamData(stream, buf, batch * N_CHANNELS * SAMPLE_SIZE);
         num_frames -= batch;
     }
@@ -85,6 +95,19 @@ void Psyz_AudioDestroy(void) {
 void Psyz_AudioLock() { SDL_LockMutex(mutex); }
 
 void Psyz_AudioUnlock() { SDL_UnlockMutex(mutex); }
+
+unsigned long long Psyz_AudioRenderedFrames(void) {
+    return atomic_load(&rendered_frames);
+}
+
+unsigned long long Psyz_AudioRenderedEnergy(void) {
+    return atomic_load(&rendered_energy);
+}
+
+void Psyz_AudioResetMetrics(void) {
+    atomic_store(&rendered_frames, 0);
+    atomic_store(&rendered_energy, 0);
+}
 
 void Psyz_AudioPause(void) { SDL_PauseAudioStreamDevice(sdl_stream); }
 

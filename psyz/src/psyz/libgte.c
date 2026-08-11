@@ -110,6 +110,13 @@ void SetGeomOffset(long ofx, long ofy) {
 
 void SetGeomScreen(long h) { H = h; }
 
+void ReadGeomOffset(int* x, int* y) {
+    if (x != NULL) *x = OFX;
+    if (y != NULL) *y = OFY;
+}
+
+long ReadGeomScreen(void) { return H; }
+
 void SetRotMatrix(MATRIX* m) {
     M.m[0][0] = m->m[0][0];
     M.m[0][1] = m->m[0][1];
@@ -170,7 +177,11 @@ void SetFarColor(long rfc, long gfc, long bfc) {
     L2.t[2] = (int)(bfc << 4);
 }
 
-void SetFogNear(long a, long h) { NOT_IMPLEMENTED; }
+void SetFogNear(long a, long h) {
+    if (h == 0) return;
+    DQA = (short)(-(((long long)a * 320) / h));
+    DQB = 0x1400000;
+}
 
 void Psyz_GteLdRgb(CVECTOR* v) { *(unsigned int*)&RGBC = *(unsigned int*)v; }
 void Psyz_GteStRgb(CVECTOR* v) { *(unsigned int*)v = RGB2; }
@@ -1202,7 +1213,7 @@ long NormalClip(long sxy0, long sxy1, long sxy2) {
 void NormalColorCol(SVECTOR* v0, CVECTOR* v1, CVECTOR* v2) {
     Psyz_GteLdv0(v0);
     Psyz_GteLdRgb(v1);
-    NCCS(0x1B04084B);
+    NCCS(0x4B08041B);
     Psyz_GteStRgb(v2);
 }
 
@@ -1210,14 +1221,14 @@ void NormalColorDpq(SVECTOR* v0, CVECTOR* v1, long p, CVECTOR* v2) {
     Psyz_GteLdv0(v0);
     Psyz_GteLdRgb(v1);
     IR0 = (short)p;
-    NCDS(0x1304E84A);
+    NCDS(0x4AE80413);
     Psyz_GteStRgb(v2);
 }
 
 void DpqColor(CVECTOR* v0, long p, CVECTOR* v1) {
     Psyz_GteLdRgb(v0);
     IR0 = (short)p;
-    DPCS(0x1000784A);
+    DPCS(0x4A780010);
     Psyz_GteStRgb(v1);
 }
 

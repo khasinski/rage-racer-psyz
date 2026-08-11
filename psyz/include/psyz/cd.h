@@ -36,6 +36,9 @@ typedef int (*PsyzCdReadCB)(struct PsyzCdRead* read);
  */
 int Psyz_CdSetDiskPath(const char* diskPath);
 
+/** Return the absolute INDEX 01 sector for a one-based CUE track. */
+int Psyz_CdGetTrackSector(int track);
+
 /**
  * @brief Simulate CD-ROM drive shell (lid) opening or closing
  *

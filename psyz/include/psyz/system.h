@@ -58,11 +58,9 @@ long psyz_ioctl(long fd, long com, long arg);
  * function is used internally when opening and creating files, or when
  * enumerating the list of files in the specified directory.
  *
- * @note The filename portion (after the last path separator) is automatically
- *       truncated to 19 characters to match PS1 DIRENTRY.name[20] which
- *       requires null-termination for compatibility with SDK string functions.
- *       This truncation is applied regardless of whether callback or internal
- *       adjustment is used.
+ * Directory enumeration truncates names only when filling PS1's 20-byte
+ * DIRENTRY field. File I/O keeps the complete card filename so distinct save
+ * slots whose suffix differs after byte 19 do not alias each other.
  *
  * @param dst Destination buffer for adjusted path (must be valid)
  * @param src Source path to adjust (PlayStation 1 format)

@@ -74,6 +74,9 @@ void Psyz_PadsGet(int port, char* dst, int len);
  */
 void Psyz_PadsSet(int port, const char* src, int len);
 
+/** Override one keyboard binding. Button indices follow the 16 PAD bits. */
+int Psyz_SetKeyboardKey(int button_index, const char* key_name);
+
 #ifdef __cplusplus
 }
 #endif

@@ -210,6 +210,9 @@ int Psyz_VideoStats(PsyzVideoStats* stats);
  */
 unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h);
 
+/* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
+int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
+
 #ifdef __cplusplus
 }
 #endif

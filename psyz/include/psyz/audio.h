@@ -52,6 +52,11 @@ void Psyz_AudioLock(void);
  */
 void Psyz_AudioUnlock(void);
 
+/** Debug/test counters for PCM actually produced by the SPU mixer. */
+unsigned long long Psyz_AudioRenderedFrames(void);
+unsigned long long Psyz_AudioRenderedEnergy(void);
+void Psyz_AudioResetMetrics(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -39,26 +39,6 @@ static void default_adjust_path(char* dst, const char* src, int maxlen) {
     }
 }
 
-static void truncate_filename(char* path) {
-    // find the last path separator, then truncate it
-    // memcard save names cannot exceed 20 characters (19 + null terminator)
-    const int max_filename_len = 20;
-    char* filename = path;
-    char* p = path;
-    while (*p) {
-        if (*p == '/' || *p == '\\') {
-            filename = p + 1;
-        }
-        p++;
-    }
-
-    // truncate if filename exceeds max length
-    size_t filename_len = strlen(filename);
-    if (filename_len >= max_filename_len) {
-        filename[max_filename_len - 1] = '\0';
-    }
-}
-
 void Psyz_AdjustPathCB(
     int (*callback)(char* dst, const char* src, int maxlen)) {
     adjust_path_cb = callback;
@@ -68,7 +48,6 @@ void Psyz_AdjustPath(char* dst, const char* src, int maxlen) {
     if (!adjust_path_cb || adjust_path_cb(dst, src, maxlen) < 0) {
         default_adjust_path(dst, src, maxlen);
     }
-    truncate_filename(dst);
 }
 
 char* Psyz_JoinPath(char* left, const char* right, int maxlen) {

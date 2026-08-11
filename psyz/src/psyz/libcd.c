@@ -319,10 +319,14 @@ static int parse_cue_file(const char* cue_path) {
 
 // Cached last-command response, exposed via CD_sync().
 static u_char last_result[8];
+static size_t last_result_size;
 static int last_intr = CdlComplete;
 
-static void cache_last_result(const u_char* result, int intr) {
-    memcpy(last_result, result, sizeof(last_result));
+static void cache_last_result(const u_char* result, size_t size, int intr) {
+    memset(last_result, 0, sizeof(last_result));
+    memcpy(last_result, result,
+           size < sizeof(last_result) ? size : sizeof(last_result));
+    last_result_size = size < sizeof(last_result) ? size : sizeof(last_result);
     last_intr = intr;
 }
 
@@ -365,6 +369,12 @@ int Psyz_CdSetDiskPath(const char* diskPath) {
     is_disk_loaded = 1;
     DEBUGF("Disk path set: %s", diskPath);
     return 0;
+}
+
+int Psyz_CdGetTrackSector(int track) {
+    if (track < 1 || track > g_track_count || !g_tracks[track - 1].is_valid)
+        return -1;
+    return g_tracks[track - 1].abs_sector;
 }
 
 static PsyzCdReadCB disk_read_cb = NULL;
@@ -737,7 +747,7 @@ static void psyz_play() {
         WARNF("CdlModeDA not active, audio will not be played");
         return;
     }
-    if (is_playing) {
+    if (is_playing && !need_cdda_rewind) {
         DEBUGF("audio already playing");
         return;
     }
@@ -747,6 +757,9 @@ static void psyz_play() {
         Psyz_AudioUnlock();
         return;
     }
+    Psyz_AudioLock();
+    is_playing = 0;
+    Psyz_AudioUnlock();
     if (open_track_at_cd_pos() != 0) {
         return;
     }
@@ -871,7 +884,7 @@ int CD_initvol(void) {
 
 int CD_sync(int mode, u_char* result) {
     if (result) {
-        memcpy(result, last_result, sizeof(last_result));
+        memcpy(result, last_result, last_result_size);
     }
     return last_intr;
 }
@@ -893,7 +906,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
                 result[1] = 0x80;
                 result[2] = 0x00;
                 result[3] = 0x00;
-                cache_last_result(result, CdlDiskError);
+                cache_last_result(result, 4, CdlDiskError);
             }
             return -1;
         }
@@ -902,7 +915,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
             result[1] = 0x00;
             result[2] = 0x00;
             result[3] = 0x00;
-            cache_last_result(result, CdlComplete);
+            cache_last_result(result, 4, CdlComplete);
         }
         break;
     case CdlSetloc:
@@ -911,6 +924,9 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
             return -2;
         }
         CD_pos = *(CdlLOC*)param;
+        /* A following CdlPlay starts from the newly requested location even
+         * when another CD-DA track is currently active. */
+        need_cdda_rewind = 1;
         break;
     case CdlPlay:
         psyz_play();
@@ -995,7 +1011,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
         result[6] = 0x00;
         result[7] = 0x00;
         u_char status_result[8] = {(u_char)CD_status, 0, 0, 0, 0, 0, 0, 0};
-        cache_last_result(status_result, CdlComplete);
+        cache_last_result(status_result, sizeof(status_result), CdlComplete);
         break;
     }
     case CdlGetlocP:
@@ -1011,14 +1027,14 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
             result[1] = 0x80; // error-response sentinel
             result[2] = 0x00;
             result[3] = 0x00;
-            cache_last_result(result, CdlDiskError);
+            cache_last_result(result, 4, CdlDiskError);
             return -1;
         }
         result[0] = (u_char)CD_status;
         result[1] = itob(1);
         result[2] = itob(g_track_count);
         result[3] = 0x00;
-        cache_last_result(result, CdlComplete);
+        cache_last_result(result, 4, CdlComplete);
         break;
     case CdlGetTD:
         if (!param || !result) {
@@ -1030,7 +1046,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
             result[1] = 0x80;
             result[2] = 0x00;
             result[3] = 0x00;
-            cache_last_result(result, CdlDiskError);
+            cache_last_result(result, 4, CdlDiskError);
             return -1;
         }
         t = btoi(param[0]);
@@ -1042,7 +1058,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
             result[1] = 0x80;
             result[2] = 0x00;
             result[3] = 0x00;
-            cache_last_result(result, CdlDiskError);
+            cache_last_result(result, 4, CdlDiskError);
             return -1;
         } else {
             abs_sector = g_tracks[t - 1].abs_sector;
@@ -1053,7 +1069,7 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
         result[1] = itob(total / 75 / 60);
         result[2] = itob(total / 75 % 60);
         result[3] = 0x00;
-        cache_last_result(result, CdlComplete);
+        cache_last_result(result, 4, CdlComplete);
         break;
     default:
         if (com >= LEN(CD_comstr)) {
