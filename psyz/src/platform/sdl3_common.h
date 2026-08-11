@@ -1057,8 +1057,13 @@ static int writePacket(Vertex* v, int code, int n, u_long* packet, u16* pOut) {
 }
 
 static void FixupFlipUV(Vertex* v, int hasFourVertices) {
-    bool fix_u = (v[0].x > v[1].x) ^ (v[0].u > v[1].u);
-    fix_u |= (v[0].x > v[2].x) ^ (v[0].u > v[2].u);
+    /* Equal coordinates carry no orientation information.  Treating an
+     * almost-horizontal terrain edge with equal V as a flip shifts the whole
+     * tile by one texel and exposes its transparent border. */
+    bool fix_u = v[0].x != v[1].x && v[0].u != v[1].u &&
+                 ((v[0].x > v[1].x) ^ (v[0].u > v[1].u));
+    fix_u |= v[0].x != v[2].x && v[0].u != v[2].u &&
+             ((v[0].x > v[2].x) ^ (v[0].u > v[2].u));
     if (fix_u) {
         v[0].u++;
         v[1].u++;
@@ -1068,8 +1073,10 @@ static void FixupFlipUV(Vertex* v, int hasFourVertices) {
         }
     }
 
-    bool fix_v = (v[0].y > v[1].y) ^ (v[0].v > v[1].v);
-    fix_v |= (v[0].y > v[2].y) ^ (v[0].v > v[2].v);
+    bool fix_v = v[0].y != v[1].y && v[0].v != v[1].v &&
+                 ((v[0].y > v[1].y) ^ (v[0].v > v[1].v));
+    fix_v |= v[0].y != v[2].y && v[0].v != v[2].v &&
+             ((v[0].y > v[2].y) ^ (v[0].v > v[2].v));
     if (fix_v) {
         v[0].v++;
         v[1].v++;
