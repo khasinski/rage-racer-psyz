@@ -172,8 +172,8 @@ void SetFarColor(long rfc, long gfc, long bfc) {
 
 void SetFogNear(long a, long h) { NOT_IMPLEMENTED; }
 
-void Psyz_GteLdRgb(CVECTOR* v) { *(unsigned int*)&RGBC = *(unsigned int*)v; }
-void Psyz_GteStRgb(CVECTOR* v) { *(unsigned int*)v = RGB2; }
+void Psyz_GteLdRgb(CVECTOR* v) { memcpy(&RGBC, v, sizeof(RGBC)); }
+void Psyz_GteStRgb(CVECTOR* v) { memcpy(v, &RGB2, sizeof(RGB2)); }
 
 void Psyz_GteLdClmv(void* p) {
     short* s = (short*)p;
@@ -248,12 +248,12 @@ MATRIX* RotMatrix(SVECTOR* r, MATRIX* m) {
     m->m[0][1] = (short)((-cy * sz) >> 12);
     m->m[0][2] = (short)(sy);
 
-    m->m[1][0] = (short)((sx * sy * cz + (cx * sz << 12)) >> 24);
-    m->m[1][1] = (short)((-sx * sy * sz + (cx * cz << 12)) >> 24);
+    m->m[1][0] = (short)((sx * sy * cz + cx * sz * 4096) >> 24);
+    m->m[1][1] = (short)((-sx * sy * sz + cx * cz * 4096) >> 24);
     m->m[1][2] = (short)((-sx * cy) >> 12);
 
-    m->m[2][0] = (short)((-cx * sy * cz + (sx * sz << 12)) >> 24);
-    m->m[2][1] = (short)((cx * sy * sz + (sx * cz << 12)) >> 24);
+    m->m[2][0] = (short)((-cx * sy * cz + sx * sz * 4096) >> 24);
+    m->m[2][1] = (short)((cx * sy * sz + sx * cz * 4096) >> 24);
     m->m[2][2] = (short)((cx * cy) >> 12);
 #else
     // 32-bit version, less accurate but much faster on non-64bit CPUs
@@ -520,11 +520,11 @@ static void RTPS_vertex(SVECTOR* v, int sf, int lm, int depth_cue) {
     int shift = sf ? 12 : 0;
 
     // MAC1..3 = (TR<<12 + RT*V) >> sf, with 44-bit overflow detection.
-    long long m1 = ((long long)M.t[0] << 12) + (long long)M.m[0][0] * v->vx +
+    long long m1 = (long long)M.t[0] * 4096 + (long long)M.m[0][0] * v->vx +
                    (long long)M.m[0][1] * v->vy + (long long)M.m[0][2] * v->vz;
-    long long m2 = ((long long)M.t[1] << 12) + (long long)M.m[1][0] * v->vx +
+    long long m2 = (long long)M.t[1] * 4096 + (long long)M.m[1][0] * v->vx +
                    (long long)M.m[1][1] * v->vy + (long long)M.m[1][2] * v->vz;
-    long long m3 = ((long long)M.t[2] << 12) + (long long)M.m[2][0] * v->vx +
+    long long m3 = (long long)M.t[2] * 4096 + (long long)M.m[2][0] * v->vx +
                    (long long)M.m[2][1] * v->vy + (long long)M.m[2][2] * v->vz;
     m1 = mac_check_44(m1, 0);
     m2 = mac_check_44(m2, 1);
