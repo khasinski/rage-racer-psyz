@@ -212,6 +212,26 @@ TEST_F(gpu_Test, replay_canonical_gp0_words) {
     free(frame);
 }
 
+TEST_F(gpu_Test, replay_expands_32_bit_words_on_64_bit_hosts) {
+    const unsigned int state[] = {0xE3000000, 0xE403BCFF, 0xE5000000};
+    const unsigned int quad[] = {
+        0x280000F8, 0x00100010, 0x00100020, 0x00200010, 0x00200020,
+    };
+    ASSERT_EQ(Psyz_GpuReplayBegin(), 0);
+    ASSERT_EQ(Psyz_GpuReplayPacket(state, LEN(state)), 0);
+    ASSERT_EQ(Psyz_GpuReplayPacket(quad, LEN(quad)), 0);
+    ASSERT_EQ(Psyz_GpuReplayEnd(), 0);
+    DrawSync(0);
+    int width = 0, height = 0;
+    unsigned char* frame = Psyz_VideoAllocCapturedDrawPage(&width, &height);
+    ASSERT_NE(frame, nullptr);
+    const size_t pixel = (16 * width + 16) * 3;
+    EXPECT_GT(frame[pixel], 200);
+    EXPECT_LT(frame[pixel + 1], 16);
+    EXPECT_LT(frame[pixel + 2], 16);
+    free(frame);
+}
+
 TEST_F(gpu_Test, draw_ft4_colored) {
     u_short tpage, clut;
     if (LoadTim(img_4bpp, &tpage, &clut)) {

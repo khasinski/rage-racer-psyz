@@ -258,8 +258,14 @@ int Psyz_GpuReplayBegin(void) {
 }
 
 int Psyz_GpuReplayPacket(const unsigned int* words, int count) {
+    u_long* native_words;
+    int i;
     if (words == NULL || count <= 0) return -1;
-    DispatchPackets((u_long*)words, count);
+    native_words = malloc((size_t)count * sizeof(*native_words));
+    if (native_words == NULL) return -1;
+    for (i = 0; i < count; i++) native_words[i] = words[i];
+    DispatchPackets(native_words, count);
+    free(native_words);
     return 0;
 }
 
