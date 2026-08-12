@@ -59,6 +59,38 @@ void Psyz_GpuTraceContext(int scene, int timer) {
     trace_timer = timer;
 }
 
+static void TraceOtNode(unsigned long long chain_index, unsigned node_index,
+                        const DR_ENV* packet) {
+    static int initialized;
+    static int enabled;
+    static int has_scene;
+    static int has_timer;
+    static int wanted_scene;
+    static int wanted_timer;
+    if (!initialized) {
+        const char* scene_text = getenv("RAGE_GPU_GP0_TRACE_SCENE");
+        const char* timer_text = getenv("RAGE_GPU_GP0_TRACE_TIMER");
+        enabled = getenv("RAGE_GPU_OT_TRACE") != NULL;
+        has_scene = scene_text != NULL;
+        has_timer = timer_text != NULL;
+        if (scene_text) wanted_scene = (int)strtol(scene_text, NULL, 0);
+        if (timer_text) wanted_timer = (int)strtol(timer_text, NULL, 0);
+        initialized = 1;
+    }
+    if (!enabled || (has_scene && trace_scene != wanted_scene) ||
+        (has_timer && trace_timer != wanted_timer)) return;
+    if (isendprim(packet)) {
+        fprintf(stderr,
+                "gp0-node chain=%llu node=%u address=%p next=end words=%u\n",
+                chain_index, node_index, (const void*)packet, getlen(packet));
+    } else {
+        fprintf(stderr,
+                "gp0-node chain=%llu node=%u address=%p next=%p words=%u\n",
+                chain_index, node_index, (const void*)packet,
+                (void*)nextPrim(packet), getlen(packet));
+    }
+}
+
 /*
  * Host ordering-table links are pointer-sized, but the GPU command stream is
  * always a dense sequence of 32-bit GP0 words.  Primitive structs place their
@@ -230,6 +262,7 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
     DR_ENV* env = (DR_ENV*)(uintptr_t)p1;
     while (1) {
         int env_len = getlen(env);
+        TraceOtNode(current_chain, packet_index, env);
         if (env_len > 0x100) {
             ERRORF("packet %p is 0x%X words long, likely corrupted",
                    (void *)env, env_len);

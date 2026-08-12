@@ -603,6 +603,8 @@ void NormalColor(SVECTOR* v0, CVECTOR* v1, CVECTOR* v2);
  * @param v2 Pointer to color vector (output)
  */
 void NormalColorCol(SVECTOR* v0, CVECTOR* v1, CVECTOR* v2);
+void NormalColorCol3(SVECTOR* v0, SVECTOR* v1, SVECTOR* v2, CVECTOR* base,
+                     CVECTOR* out0, CVECTOR* out1, CVECTOR* out2);
 
 /**
  * @brief Normal color calculation with depth cueing
