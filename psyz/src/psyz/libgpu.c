@@ -78,10 +78,11 @@ static int CanonicalizePacket(const DR_ENV* packet, u_long* output,
     return length;
 }
 
-static void TraceCanonicalPacket(const u_long* words, int length) {
+static void TraceCanonicalPacket(unsigned long long chain_index,
+                                 unsigned packet_index, unsigned code,
+                                 const u_long* words, int length) {
     static int initialized;
     static int enabled;
-    static unsigned long long packet_index;
     int i;
 
     if (!initialized) {
@@ -90,8 +91,9 @@ static void TraceCanonicalPacket(const u_long* words, int length) {
     }
     if (!enabled || length == 0) return;
 
-    fprintf(stderr, "gp0-packet index=%llu length=%d words=", packet_index++,
-            length);
+    fprintf(stderr,
+            "gp0-packet chain=%llu packet=%u code=%02x length=%d words=",
+            chain_index, packet_index, code, length);
     for (i = 0; i < length; i++) {
         fprintf(stderr, "%s%08x", i ? "," : "", (unsigned)words[i]);
     }
@@ -187,6 +189,9 @@ int Psyz_GpuExeque() {
 }
 
 static int GPU_Enqueue(u_long p1, u_long p2) {
+    static unsigned long long chain_index;
+    unsigned packet_index = 0;
+    unsigned long long current_chain = chain_index++;
     int mask = (int)p2;
     if (mask) {
         WARNF("mask not supported (mask:%08X)", mask);
@@ -210,7 +215,8 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
                        (void*)env, getcode(env), getlen(env));
                 break;
             }
-            TraceCanonicalPacket(queue_buf + queue_len, canonical_len);
+            TraceCanonicalPacket(current_chain, packet_index++, getcode(env),
+                                 queue_buf + queue_len, canonical_len);
         }
         queue_len += env_len;
         if (isendprim(env)) {
