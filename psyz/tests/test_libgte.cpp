@@ -3,6 +3,7 @@ extern "C" {
 #include <psyz.h>
 #include <kernel.h>
 #include <libgte.h>
+void DpqColor(CVECTOR* input, long depth_cue, CVECTOR* output);
 }
 
 class gte_Test : public testing::Test {
@@ -136,6 +137,17 @@ TEST_F(gte_Test, rsin) {
     EXPECT_EQ(rsin(0x0400), 0x1000);
     EXPECT_EQ(rsin(0x0800), 0x0000);
     EXPECT_EQ(rsin(0x1000), 0x0000);
+}
+
+TEST_F(gte_Test, dpq_color_preserves_gte_fractional_rounding) {
+    CVECTOR input = {0x3f, 0x3f, 0x3f, 0x2c};
+    CVECTOR output = {};
+    SetFarColor(0x80, 0x80, 0x80);
+    DpqColor(&input, 1512, &output);
+    EXPECT_EQ(output.r, 0x56);
+    EXPECT_EQ(output.g, 0x56);
+    EXPECT_EQ(output.b, 0x56);
+    EXPECT_EQ(output.cd, 0x2c);
 }
 
 TEST_F(gte_Test, trans_matrix) {
