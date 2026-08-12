@@ -998,7 +998,9 @@ int Draw_PushPrim(u_long* packets, int max_len) {
             SET_TC_ALL(vertex_cur, tpage, clut);
             TraceGpuPrimitive(vertex_cur, nVertices, code, tpage, clut,
                               draw_offset.x,
-                              draw_offset.y - (draw_area_start.y / 240) * 240);
+                              draw_offset.y - (draw_area_start.y / 240) * 240,
+                              draw_area_start.x, draw_area_start.y,
+                              draw_area_end.x, draw_area_end.y);
             Draw_EnqueueBuffer(nVertices, nIndices);
         } else {
             // shouldn't happen on a normal PSX application
@@ -1188,7 +1190,9 @@ int Draw_PushPrim(u_long* packets, int max_len) {
         SET_TC_ALL(vertex_cur, tpage, clut);
         TraceGpuPrimitive(vertex_cur, 4, code, tpage, clut,
                           draw_offset.x,
-                          draw_offset.y - (draw_area_start.y / 240) * 240);
+                          draw_offset.y - (draw_area_start.y / 240) * 240,
+                          draw_area_start.x, draw_area_start.y,
+                          draw_area_end.x, draw_area_end.y);
         Draw_EnqueueBuffer(4, 6);
     }
     return max_len - len;

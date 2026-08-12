@@ -931,6 +931,7 @@ typedef struct GpuDigestGroup {
     unsigned code;
     unsigned tpage;
     unsigned clut;
+    int areaLeft, areaTop, areaRight, areaBottom;
     unsigned long long count;
 } GpuDigestGroup;
 static GpuDigestGroup gpu_digest_groups[512];
@@ -969,8 +970,10 @@ static void FlushGpuDigest(void) {
         fprintf(stderr, "gpu-groups frame=%llu groups=", gpu_trace_frame);
         for (group = 0; group < gpu_digest_group_count; group++) {
             const GpuDigestGroup* item = &gpu_digest_groups[group];
-            fprintf(stderr, "%s%02x/%04x/%04x:%llu", group ? "," : "",
-                    item->code, item->tpage, item->clut, item->count);
+            fprintf(stderr, "%s%02x/%04x/%04x@%d,%d,%d,%d:%llu",
+                    group ? "," : "", item->code, item->tpage, item->clut,
+                    item->areaLeft, item->areaTop, item->areaRight,
+                    item->areaBottom, item->count);
         }
         fputc('\n', stderr);
     }
@@ -1061,7 +1064,9 @@ static void TraceTriangleTexel(const Vertex* a, const Vertex* b,
 
 static void TraceGpuPrimitive(const Vertex* v, int count, int code,
                               u16 tpage, u16 clut,
-                              int offsetX, int offsetY) {
+                              int offsetX, int offsetY,
+                              int areaLeft, int areaTop,
+                              int areaRight, int areaBottom) {
     unsigned long long frame = gpu_stats.total_frames;
     unsigned long long order;
     int x = gpu_trace_x;
@@ -1108,7 +1113,9 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
             for (group = 0; group < gpu_digest_group_count; group++) {
                 GpuDigestGroup* item = &gpu_digest_groups[group];
                 if (item->code == normalizedCode &&
-                    item->tpage == normalizedTpage && item->clut == clut) {
+                    item->tpage == normalizedTpage && item->clut == clut &&
+                    item->areaLeft == areaLeft && item->areaTop == areaTop &&
+                    item->areaRight == areaRight && item->areaBottom == areaBottom) {
                     item->count++;
                     break;
                 }
@@ -1118,6 +1125,10 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
                 item->code = normalizedCode;
                 item->tpage = normalizedTpage;
                 item->clut = clut;
+                item->areaLeft = areaLeft;
+                item->areaTop = areaTop;
+                item->areaRight = areaRight;
+                item->areaBottom = areaBottom;
                 item->count = 1;
             }
         }
