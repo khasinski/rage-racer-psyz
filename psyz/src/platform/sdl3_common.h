@@ -918,10 +918,63 @@ static u16 gpu_trace_tpage;
 static u16 gpu_trace_clut;
 static bool gpu_trace_initialized;
 static bool gpu_trace_enabled;
+static bool gpu_trace_verbose_enabled;
 static bool gpu_trace_has_point;
 static bool gpu_trace_has_frame;
 static bool gpu_trace_has_tpage;
 static bool gpu_trace_has_clut;
+static bool gpu_digest_enabled;
+static unsigned long long gpu_digest_hash;
+static unsigned long long gpu_digest_count;
+static unsigned long long gpu_digest_codes[256];
+typedef struct GpuDigestGroup {
+    unsigned code;
+    unsigned tpage;
+    unsigned clut;
+    unsigned long long count;
+} GpuDigestGroup;
+static GpuDigestGroup gpu_digest_groups[512];
+static unsigned gpu_digest_group_count;
+static bool gpu_digest_groups_enabled;
+
+static void GpuDigestByte(unsigned value) {
+    gpu_digest_hash ^= value & 0xFF;
+    gpu_digest_hash *= 0x100000001B3ULL;
+}
+
+static void GpuDigestValue(unsigned value, int bytes) {
+    while (bytes-- > 0) {
+        GpuDigestByte(value);
+        value >>= 8;
+    }
+}
+
+static void FlushGpuDigest(void) {
+    if (!gpu_digest_enabled || gpu_trace_frame == ~0ULL) return;
+    fprintf(stderr, "gpu-digest frame=%llu count=%llu hash=%016llx codes=",
+            gpu_trace_frame, gpu_digest_count, gpu_digest_hash);
+    {
+        int code;
+        bool first = true;
+        for (code = 0; code < 256; code++) {
+            if (gpu_digest_codes[code] == 0) continue;
+            fprintf(stderr, "%s%02x:%llu", first ? "" : ",", code,
+                    gpu_digest_codes[code]);
+            first = false;
+        }
+    }
+    fputc('\n', stderr);
+    if (gpu_digest_groups_enabled) {
+        unsigned group;
+        fprintf(stderr, "gpu-groups frame=%llu groups=", gpu_trace_frame);
+        for (group = 0; group < gpu_digest_group_count; group++) {
+            const GpuDigestGroup* item = &gpu_digest_groups[group];
+            fprintf(stderr, "%s%02x/%04x/%04x:%llu", group ? "," : "",
+                    item->code, item->tpage, item->clut, item->count);
+        }
+        fputc('\n', stderr);
+    }
+}
 
 static void InitGpuPrimitiveTrace(void) {
     const char* point;
@@ -934,14 +987,17 @@ static void InitGpuPrimitiveTrace(void) {
     frameText = getenv("RAGE_GPU_TRACE_FRAME");
     tpageText = getenv("RAGE_GPU_TRACE_TPAGE");
     clutText = getenv("RAGE_GPU_TRACE_CLUT");
+    gpu_digest_enabled = getenv("RAGE_GPU_DIGEST") != NULL;
+    gpu_digest_groups_enabled = getenv("RAGE_GPU_DIGEST_GROUPS") != NULL;
     gpu_trace_has_point = point != NULL &&
                           sscanf(point, "%d,%d", &gpu_trace_x,
                                  &gpu_trace_y) == 2;
     gpu_trace_has_frame = frameText != NULL;
     gpu_trace_has_tpage = tpageText != NULL;
     gpu_trace_has_clut = clutText != NULL;
-    gpu_trace_enabled = gpu_trace_has_point || gpu_trace_has_tpage ||
-                        gpu_trace_has_clut;
+    gpu_trace_verbose_enabled = gpu_trace_has_point || gpu_trace_has_tpage ||
+                                gpu_trace_has_clut;
+    gpu_trace_enabled = gpu_trace_verbose_enabled || gpu_digest_enabled;
     if (gpu_trace_has_frame) {
         gpu_trace_requested_frame = strtoull(frameText, NULL, 0);
     }
@@ -1019,10 +1075,54 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     x = gpu_trace_x;
     y = gpu_trace_y;
     if (frame != gpu_trace_frame) {
+        FlushGpuDigest();
         gpu_trace_frame = frame;
         gpu_trace_order = 0;
+        gpu_digest_hash = 0xCBF29CE484222325ULL;
+        gpu_digest_count = 0;
+        memset(gpu_digest_codes, 0, sizeof(gpu_digest_codes));
+        gpu_digest_group_count = 0;
     }
     order = gpu_trace_order++;
+    if (gpu_digest_enabled) {
+        GpuDigestValue((unsigned)code & 0xFF, 1);
+        GpuDigestValue((unsigned)tpage & 0x9FF, 2);
+        GpuDigestValue(clut, 2);
+        GpuDigestValue((unsigned)count, 1);
+        for (i = 0; i < count; i++) {
+            GpuDigestValue((unsigned)(v[i].x + offsetX), 2);
+            GpuDigestValue((unsigned)(v[i].y + offsetY), 2);
+            GpuDigestValue(v[i].u, 1);
+            GpuDigestValue(v[i].v, 1);
+            GpuDigestValue(v[i].r, 1);
+            GpuDigestValue(v[i].g, 1);
+            GpuDigestValue(v[i].b, 1);
+            GpuDigestValue(v[i].a, 1);
+        }
+        gpu_digest_count++;
+        gpu_digest_codes[(unsigned)code & 0xFF]++;
+        if (gpu_digest_groups_enabled) {
+            unsigned group;
+            unsigned normalizedCode = (unsigned)code & 0xFF;
+            unsigned normalizedTpage = (unsigned)tpage & 0x9FF;
+            for (group = 0; group < gpu_digest_group_count; group++) {
+                GpuDigestGroup* item = &gpu_digest_groups[group];
+                if (item->code == normalizedCode &&
+                    item->tpage == normalizedTpage && item->clut == clut) {
+                    item->count++;
+                    break;
+                }
+            }
+            if (group == gpu_digest_group_count && group < 512) {
+                GpuDigestGroup* item = &gpu_digest_groups[gpu_digest_group_count++];
+                item->code = normalizedCode;
+                item->tpage = normalizedTpage;
+                item->clut = clut;
+                item->count = 1;
+            }
+        }
+    }
+    if (!gpu_trace_verbose_enabled) return;
     if (gpu_trace_has_frame && frame != gpu_trace_requested_frame) return;
     if (gpu_trace_has_tpage && (tpage & 0x9FF) != gpu_trace_tpage) return;
     if (gpu_trace_has_clut && clut != gpu_trace_clut) return;
