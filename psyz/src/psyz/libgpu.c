@@ -83,6 +83,7 @@ static void TraceCanonicalPacket(unsigned long long chain_index,
                                  const u_long* words, int length) {
     static int initialized;
     static int enabled;
+    PsyzVideoStats stats;
     int i;
 
     if (!initialized) {
@@ -90,10 +91,12 @@ static void TraceCanonicalPacket(unsigned long long chain_index,
         initialized = 1;
     }
     if (!enabled || length == 0) return;
+    if (Psyz_VideoStats(&stats) != 0) stats.total_frames = 0;
 
     fprintf(stderr,
-            "gp0-packet chain=%llu packet=%u code=%02x length=%d words=",
-            chain_index, packet_index, code, length);
+            "gp0-packet frame=%llu chain=%llu packet=%u code=%02x length=%d "
+            "words=",
+            stats.total_frames, chain_index, packet_index, code, length);
     for (i = 0; i < length; i++) {
         fprintf(stderr, "%s%08x", i ? "," : "", (unsigned)words[i]);
     }
