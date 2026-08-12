@@ -16,9 +16,9 @@ layout(location = 11) flat in uvec4 texWindow;
 layout(set = 2, binding = 0) uniform sampler2D texVram;
 
 uvec2 resolveTexel() {
-    vec2 texelStep = vec2(abs(dFdx(rawUV.x)), abs(dFdy(rawUV.y)));
-    vec2 uv = rawUV - 0.5 * texelStep + 1.0 / 512.0;
-    uvec2 texel = uvec2(clamp(floor(uv), vec2(0.0), vec2(255.0)));
+    // Together with the half-pixel vertex offset this matches the PS1 DDA's
+    // 12.12 attribute rounding at native resolution.
+    uvec2 texel = uvec2(clamp(roundEven(rawUV), vec2(0.0), vec2(255.0)));
     return (texel & texWindow.xy) | texWindow.zw;
 }
 

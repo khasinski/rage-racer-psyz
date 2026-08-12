@@ -967,6 +967,42 @@ static bool TracePointInTriangle(const Vertex* a, const Vertex* b,
                          (ab <= 0 && bc <= 0 && ca <= 0));
 }
 
+static void TraceTriangleTexel(const Vertex* a, const Vertex* b,
+                               const Vertex* c, int x, int y,
+                               int offsetX, int offsetY, const char* triangle) {
+    double ax = a->x, ay = a->y;
+    double bx = b->x, by = b->y;
+    double cx = c->x, cy = c->y;
+    double px = (double)(x - offsetX);
+    double py = (double)(y - offsetY);
+    double determinant = (bx - ax) * (cy - ay) -
+                         (by - ay) * (cx - ax);
+    double dudx, dudy, dvdx, dvdy, rawU, rawV, resolvedU, resolvedV;
+    if (determinant == 0.0) return;
+    dudx = ((double)(b->u - a->u) * (cy - ay) -
+            (double)(c->u - a->u) * (by - ay)) / determinant;
+    dudy = ((bx - ax) * (double)(c->u - a->u) -
+            (cx - ax) * (double)(b->u - a->u)) / determinant;
+    dvdx = ((double)(b->v - a->v) * (cy - ay) -
+            (double)(c->v - a->v) * (by - ay)) / determinant;
+    dvdy = ((bx - ax) * (double)(c->v - a->v) -
+            (cx - ax) * (double)(b->v - a->v)) / determinant;
+    rawU = a->u + dudx * (px - ax) + dudy * (py - ay);
+    rawV = a->v + dvdx * (px - ax) + dvdy * (py - ay);
+    resolvedU = nearbyint(rawU);
+    resolvedV = nearbyint(rawV);
+    {
+        const unsigned char* twin = (const unsigned char*)&a->twin;
+        unsigned windowU = ((unsigned)resolvedU & twin[0]) | twin[2];
+        unsigned windowV = ((unsigned)resolvedV & twin[1]) | twin[3];
+        fprintf(stderr,
+                " tri=%s rawuv=%.4f,%.4f duv=%.4f,%.4f "
+                "texel=%.0f,%.0f window=%u,%u",
+                triangle, rawU, rawV, dudx, dvdy, resolvedU, resolvedV,
+                windowU, windowV);
+    }
+}
+
 static void TraceGpuPrimitive(const Vertex* v, int count, int code,
                               u16 tpage, u16 clut,
                               int offsetX, int offsetY) {
@@ -976,6 +1012,7 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     int y = gpu_trace_y;
     int i;
     bool covered;
+    int coveredTriangle = -1;
 
     InitGpuPrimitiveTrace();
     if (!gpu_trace_enabled) return;
@@ -993,9 +1030,11 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     if (gpu_trace_has_point) {
         covered = TracePointInTriangle(&v[0], &v[1], &v[2], x, y,
                                        offsetX, offsetY);
+        if (covered) coveredTriangle = 0;
         if (!covered && count == 4) {
             covered = TracePointInTriangle(&v[1], &v[3], &v[2], x, y,
                                            offsetX, offsetY);
+            if (covered) coveredTriangle = 1;
         }
     }
     if (!covered) return;
@@ -1005,6 +1044,14 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
                 "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
                 "tpage=%04x clut=%04x",
                 frame, order, x, y, code & 0xFF, tpage, clut);
+        if ((code & 0x04) != 0) {
+            if (coveredTriangle == 0)
+                TraceTriangleTexel(&v[0], &v[1], &v[2], x, y,
+                                   offsetX, offsetY, "012");
+            else if (coveredTriangle == 1)
+                TraceTriangleTexel(&v[1], &v[3], &v[2], x, y,
+                                   offsetX, offsetY, "132");
+        }
     } else {
         fprintf(stderr,
                 "gpu-prim frame=%llu order=%llu code=%02x "

@@ -22,8 +22,10 @@ layout(location = 10) flat out ivec2 pageBase;   // texture page origin, in VRAM
 layout(location = 11) flat out uvec4 texWindow;  // GP0(E2h) as {and.xy, or.zw}
 
 void main() {
-    float x = ((float(pos.x) + drawOffset.x) / (1024.0 / 2.0)) - 1.0;
-    float y = ((float(pos.y) + drawOffset.y) / (512.0 / 2.0)) - 1.0;
+    // Native-resolution PS1 polygons are sampled with integer vertices at
+    // pixel centres, rather than at modern GPU pixel boundaries.
+    float x = ((float(pos.x) + drawOffset.x + 0.5) / (1024.0 / 2.0)) - 1.0;
+    float y = ((float(pos.y) + drawOffset.y + 0.5) / (512.0 / 2.0)) - 1.0;
     // SDL_GPU NDC y=-1 is the bottom while texture row 0 is the top; negate Y
     // so VRAM row 0 lands on texture row 0, like the GL FBO convention.
     gl_Position = vec4(x, -y, 0.0, 1.0);
