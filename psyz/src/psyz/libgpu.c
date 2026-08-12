@@ -51,6 +51,53 @@ static void GPU_read_image() { NOT_IMPLEMENTED; }
 
 static int queue_len = 0;
 static u_long queue_buf[0x4000];
+
+/*
+ * Host ordering-table links are pointer-sized, but the GPU command stream is
+ * always a dense sequence of 32-bit GP0 words.  Primitive structs place their
+ * packed payload immediately after O_TAG; drawing-environment packets retain
+ * u_long command slots for source compatibility.  Normalize both layouts at
+ * this boundary so every renderer and diagnostic consumes the same format.
+ */
+static int CanonicalizePacket(const DR_ENV* packet, u_long* output,
+                              int output_words) {
+    int length = getlen(packet);
+    int code;
+    int i;
+
+    if (length < 0 || length > output_words) return -1;
+    if (length == 0) return 0;
+
+    code = getcode(packet) & ~3;
+    if (code >= 0x20 && code < 0x80) {
+        const u32* packed = (const u32*)packet->code;
+        for (i = 0; i < length; i++) output[i] = packed[i];
+    } else {
+        for (i = 0; i < length; i++) output[i] = packet->code[i] & 0xFFFFFFFFu;
+    }
+    return length;
+}
+
+static void TraceCanonicalPacket(const u_long* words, int length) {
+    static int initialized;
+    static int enabled;
+    static unsigned long long packet_index;
+    int i;
+
+    if (!initialized) {
+        enabled = getenv("RAGE_GPU_GP0_TRACE") != NULL;
+        initialized = 1;
+    }
+    if (!enabled || length == 0) return;
+
+    fprintf(stderr, "gp0-packet index=%llu length=%d words=", packet_index++,
+            length);
+    for (i = 0; i < length; i++) {
+        fprintf(stderr, "%s%08x", i ? "," : "", (unsigned)words[i]);
+    }
+    fputc('\n', stderr);
+}
+
 static void DispatchPackets(u_long* buf, int len) {
     RECT rect;
     unsigned int x, y;
@@ -170,24 +217,14 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
             Psyz_GpuExeque();
         }
         if (sizeof(u_long) == 8) {
-            // Wow okay, this part is uuuugly...
-            // Gpu code is usually written to a u_long array, which will work
-            // fine on both 32-bit and 64-bit compiled code.
-            // But primitives are mapped from structs, we need to align the data
-            int code = getcode(env) & ~3;
-            if (code >= 0x20 && code < 0x80) {
-                // it is a prim, we need to split
-                u32* prim_data = (u32*)env->code;
-                for (int i = 0; i < env_len; i++) {
-                    queue_buf[queue_len + i] = prim_data[i];
-                }
-            } else if (env_len > 0) {
-                // TODO this is a temporary solution:
-                // if gpu commands get merged with primitives, this will not
-                // work
-                memcpy(queue_buf + queue_len, env->code,
-                       (size_t)env_len * sizeof(u_long));
+            int canonical_len = CanonicalizePacket(
+                env, queue_buf + queue_len, LEN(queue_buf) - queue_len);
+            if (canonical_len < 0) {
+                ERRORF("cannot canonicalize packet %p code=%02X len=%u",
+                       (void*)env, getcode(env), getlen(env));
+                break;
             }
+            TraceCanonicalPacket(queue_buf + queue_len, canonical_len);
         }
         queue_len += env_len;
         if (isendprim(env)) {
