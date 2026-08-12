@@ -87,6 +87,7 @@ static int CanonicalizePacket(const DR_ENV* packet, u_long* output,
 
 static void TraceCanonicalPacket(unsigned long long chain_index,
                                  unsigned packet_index, unsigned code,
+                                 const DR_ENV* packet,
                                  const u_long* words, int length) {
     static int initialized;
     static int enabled;
@@ -119,10 +120,11 @@ static void TraceCanonicalPacket(unsigned long long chain_index,
     if (has_timer && trace_timer != wanted_timer) return;
 
     fprintf(stderr,
-            "gp0-packet frame=%llu scene=%d timer=%d chain=%llu packet=%u code=%02x length=%d "
+            "gp0-packet frame=%llu scene=%d timer=%d chain=%llu packet=%u "
+            "address=%p code=%02x length=%d "
             "words=",
             stats.total_frames, trace_scene, trace_timer,
-            chain_index, packet_index, code, length);
+            chain_index, packet_index, (const void *)packet, code, length);
     for (i = 0; i < length; i++) {
         fprintf(stderr, "%s%08x", i ? "," : "", (unsigned)words[i]);
     }
@@ -244,7 +246,7 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
                        (void*)env, getcode(env), getlen(env));
                 break;
             }
-            TraceCanonicalPacket(current_chain, packet_index++, getcode(env),
+            TraceCanonicalPacket(current_chain, packet_index++, getcode(env), env,
                                  queue_buf + queue_len, canonical_len);
         }
         queue_len += env_len;
