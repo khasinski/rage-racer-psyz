@@ -1153,8 +1153,9 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     if (gpu_trace_has_point) {
         fprintf(stderr,
                 "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
-                "tpage=%04x clut=%04x",
-                frame, order, x, y, code & 0xFF, tpage, clut);
+                "tpage=%04x clut=%04x area=%d,%d,%d,%d",
+                frame, order, x, y, code & 0xFF, tpage, clut,
+                areaLeft, areaTop, areaRight, areaBottom);
         if ((code & 0x04) != 0) {
             if (coveredTriangle == 0)
                 TraceTriangleTexel(&v[0], &v[1], &v[2], x, y,
@@ -1166,8 +1167,9 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
     } else {
         fprintf(stderr,
                 "gpu-prim frame=%llu order=%llu code=%02x "
-                "tpage=%04x clut=%04x",
-                frame, order, code & 0xFF, tpage, clut);
+                "tpage=%04x clut=%04x area=%d,%d,%d,%d",
+                frame, order, code & 0xFF, tpage, clut,
+                areaLeft, areaTop, areaRight, areaBottom);
     }
     for (i = 0; i < count; i++) {
         fprintf(stderr, " v%d=%d,%d/%u,%u/%02x%02x%02x%02x",
