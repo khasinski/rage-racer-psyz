@@ -1015,6 +1015,15 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
     return out;
 }
 
+unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h) {
+    int saved_show_fb = show_fb;
+    unsigned char* out;
+    show_fb = cur_draw_fb;
+    out = Psyz_VideoAllocCapturedFrame(w, h);
+    show_fb = saved_show_fb;
+    return out;
+}
+
 // ===== display state =====
 
 void Draw_Reset(void) {

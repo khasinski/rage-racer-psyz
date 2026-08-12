@@ -210,6 +210,10 @@ int Psyz_VideoStats(PsyzVideoStats* stats);
  */
 unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h);
 
+/* Capture the 320x240 VRAM page currently selected as the drawing target,
+ * rather than the page currently selected for display. Diagnostic only. */
+unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h);
+
 /* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
 

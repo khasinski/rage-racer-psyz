@@ -716,6 +716,39 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h) {
     return pixels;
 }
 
+unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h) {
+    const int channels = 3;
+    const int page_y = (draw_area_start.y / 240) * 240;
+    if (vram_fbo == 0) {
+        *w = *h = 0;
+        return NULL;
+    }
+    *w = display_size.x;
+    *h = display_size.y;
+    unsigned char* pixels = malloc((size_t)(*w) * (*h) * channels);
+    if (!pixels) return NULL;
+    size_t count = (size_t)(*w) * (*h);
+    u8* rgba = GetVramConvertBuffer(count * 4);
+    if (!rgba) {
+        free(pixels);
+        return NULL;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, vram_fbo);
+    glReadPixels(0, page_y, *w, *h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    if (glGetError() != GL_NO_ERROR) {
+        free(pixels);
+        return NULL;
+    }
+    for (size_t i = 0; i < count; i++) {
+        pixels[i * 3 + 0] = rgba[i * 4 + 0];
+        pixels[i * 3 + 1] = rgba[i * 4 + 1];
+        pixels[i * 3 + 2] = rgba[i * 4 + 2];
+    }
+    return pixels;
+}
+
 unsigned Psyz_VideoGetInternalResolution(void) { return internal_res; }
 
 int Psyz_VideoSetInternalResolution(unsigned multiplier) {
