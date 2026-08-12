@@ -52,6 +52,9 @@ int Psyz_GpuExeque(void);
  */
 void Psyz_GpuDisplayCommand(unsigned int word);
 
+/** Attach game-defined diagnostic state to subsequently submitted GP0 lists. */
+void Psyz_GpuTraceContext(int scene, int timer);
+
 #ifdef __cplusplus
 }
 #endif

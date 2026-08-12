@@ -51,6 +51,13 @@ static void GPU_read_image() { NOT_IMPLEMENTED; }
 
 static int queue_len = 0;
 static u_long queue_buf[0x4000];
+static int trace_scene = -1;
+static int trace_timer = -1;
+
+void Psyz_GpuTraceContext(int scene, int timer) {
+    trace_scene = scene;
+    trace_timer = timer;
+}
 
 /*
  * Host ordering-table links are pointer-sized, but the GPU command stream is
@@ -84,25 +91,38 @@ static void TraceCanonicalPacket(unsigned long long chain_index,
     static int initialized;
     static int enabled;
     static int has_frame;
+    static int has_scene;
+    static int has_timer;
     static unsigned long long wanted_frame;
+    static int wanted_scene;
+    static int wanted_timer;
     PsyzVideoStats stats;
     int i;
 
     if (!initialized) {
         const char* frame_text = getenv("RAGE_GPU_GP0_TRACE_FRAME");
+        const char* scene_text = getenv("RAGE_GPU_GP0_TRACE_SCENE");
+        const char* timer_text = getenv("RAGE_GPU_GP0_TRACE_TIMER");
         enabled = getenv("RAGE_GPU_GP0_TRACE") != NULL;
         has_frame = frame_text != NULL;
+        has_scene = scene_text != NULL;
+        has_timer = timer_text != NULL;
         if (frame_text) wanted_frame = strtoull(frame_text, NULL, 0);
+        if (scene_text) wanted_scene = (int)strtol(scene_text, NULL, 0);
+        if (timer_text) wanted_timer = (int)strtol(timer_text, NULL, 0);
         initialized = 1;
     }
     if (!enabled || length == 0) return;
     if (Psyz_VideoStats(&stats) != 0) stats.total_frames = 0;
     if (has_frame && stats.total_frames != wanted_frame) return;
+    if (has_scene && trace_scene != wanted_scene) return;
+    if (has_timer && trace_timer != wanted_timer) return;
 
     fprintf(stderr,
-            "gp0-packet frame=%llu chain=%llu packet=%u code=%02x length=%d "
+            "gp0-packet frame=%llu scene=%d timer=%d chain=%llu packet=%u code=%02x length=%d "
             "words=",
-            stats.total_frames, chain_index, packet_index, code, length);
+            stats.total_frames, trace_scene, trace_timer,
+            chain_index, packet_index, code, length);
     for (i = 0; i < length; i++) {
         fprintf(stderr, "%s%08x", i ? "," : "", (unsigned)words[i]);
     }
