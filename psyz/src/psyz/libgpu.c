@@ -83,15 +83,21 @@ static void TraceCanonicalPacket(unsigned long long chain_index,
                                  const u_long* words, int length) {
     static int initialized;
     static int enabled;
+    static int has_frame;
+    static unsigned long long wanted_frame;
     PsyzVideoStats stats;
     int i;
 
     if (!initialized) {
+        const char* frame_text = getenv("RAGE_GPU_GP0_TRACE_FRAME");
         enabled = getenv("RAGE_GPU_GP0_TRACE") != NULL;
+        has_frame = frame_text != NULL;
+        if (frame_text) wanted_frame = strtoull(frame_text, NULL, 0);
         initialized = 1;
     }
     if (!enabled || length == 0) return;
     if (Psyz_VideoStats(&stats) != 0) stats.total_frames = 0;
+    if (has_frame && stats.total_frames != wanted_frame) return;
 
     fprintf(stderr,
             "gp0-packet frame=%llu chain=%llu packet=%u code=%02x length=%d "
