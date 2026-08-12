@@ -191,6 +191,27 @@ TEST_F(gpu_Test, draw_ft4) {
     AssertFrame("draw_ft4");
 }
 
+TEST_F(gpu_Test, replay_canonical_gp0_words) {
+    const unsigned int words[] = {
+        0xE3000000, 0xE403BCFF, 0xE5000000,
+        0x280000F8, 0x00100010, 0x00100020, 0x00200010, 0x00200020,
+    };
+    ASSERT_EQ(Psyz_GpuReplayBegin(), 0);
+    ASSERT_EQ(Psyz_GpuReplayPacket(words, LEN(words)), 0);
+    ASSERT_EQ(Psyz_GpuReplayEnd(), 0);
+    DrawSync(0);
+    int width = 0, height = 0;
+    unsigned char* frame = Psyz_VideoAllocCapturedDrawPage(&width, &height);
+    ASSERT_NE(frame, nullptr);
+    ASSERT_EQ(width, 320);
+    ASSERT_EQ(height, 240);
+    const size_t pixel = (16 * width + 16) * 3;
+    EXPECT_GT(frame[pixel], 200);
+    EXPECT_LT(frame[pixel + 1], 16);
+    EXPECT_LT(frame[pixel + 2], 16);
+    free(frame);
+}
+
 TEST_F(gpu_Test, draw_ft4_colored) {
     u_short tpage, clut;
     if (LoadTim(img_4bpp, &tpage, &clut)) {

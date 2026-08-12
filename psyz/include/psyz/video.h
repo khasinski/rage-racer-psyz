@@ -217,6 +217,12 @@ unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h);
 /* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
 
+/* Diagnostic entry point: execute an already canonicalized GP0 FIFO stream.
+ * This bypasses OT pointer parsing but uses the normal platform renderer. */
+int Psyz_GpuReplayBegin(void);
+int Psyz_GpuReplayPacket(const unsigned int* words, int count);
+int Psyz_GpuReplayEnd(void);
+
 #ifdef __cplusplus
 }
 #endif

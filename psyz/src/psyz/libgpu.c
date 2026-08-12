@@ -251,6 +251,24 @@ int Psyz_GpuExeque() {
     return queue_len;
 }
 
+int Psyz_GpuReplayBegin(void) {
+    Psyz_GpuExeque();
+    Draw_ResetBuffer();
+    return 0;
+}
+
+int Psyz_GpuReplayPacket(const unsigned int* words, int count) {
+    if (words == NULL || count <= 0) return -1;
+    DispatchPackets((u_long*)words, count);
+    return 0;
+}
+
+int Psyz_GpuReplayEnd(void) {
+    Draw_FlushBuffer();
+    Draw_ExequeSync();
+    return 0;
+}
+
 static int GPU_Enqueue(u_long p1, u_long p2) {
     static unsigned long long chain_index;
     unsigned packet_index = 0;
