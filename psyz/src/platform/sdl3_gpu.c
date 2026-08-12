@@ -1065,7 +1065,6 @@ int Draw_PushPrim(u_long* packets, int max_len) {
             }
 
             if (isTextured) {
-                FixupFlipUV(vertex_cur, code & EXTRA_VERTEX);
                 /* The GPU latches the texture page carried by a textured
                  * polygon. Later sprites have no tpage field and consume
                  * that latched value. */

@@ -1103,37 +1103,6 @@ static int writePacket(Vertex* v, int code, int n, u_long* packet, u16* pOut) {
     return w;
 }
 
-static void FixupFlipUV(Vertex* v, int hasFourVertices) {
-    /* Equal coordinates carry no orientation information.  Treating an
-     * almost-horizontal terrain edge with equal V as a flip shifts the whole
-     * tile by one texel and exposes its transparent border. */
-    bool fix_u = v[0].x != v[1].x && v[0].u != v[1].u &&
-                 ((v[0].x > v[1].x) ^ (v[0].u > v[1].u));
-    fix_u |= v[0].x != v[2].x && v[0].u != v[2].u &&
-             ((v[0].x > v[2].x) ^ (v[0].u > v[2].u));
-    if (fix_u) {
-        v[0].u++;
-        v[1].u++;
-        v[2].u++;
-        if (hasFourVertices) {
-            v[3].u++;
-        }
-    }
-
-    bool fix_v = v[0].y != v[1].y && v[0].v != v[1].v &&
-                 ((v[0].y > v[1].y) ^ (v[0].v > v[1].v));
-    fix_v |= v[0].y != v[2].y && v[0].v != v[2].v &&
-             ((v[0].y > v[2].y) ^ (v[0].v > v[2].v));
-    if (fix_v) {
-        v[0].v++;
-        v[1].v++;
-        v[2].v++;
-        if (hasFourVertices) {
-            v[3].v++;
-        }
-    }
-}
-
 static inline bool is_subtract_abr(const Vertex* v) {
     return v->a == 0x80 && (v->t & 0x60) == 0x40;
 }
