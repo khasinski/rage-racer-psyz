@@ -42,7 +42,7 @@ vec3 applyDither(vec3 c) {
     if (dither == 0u) return c;
     int dx = int(gl_FragCoord.x) & 3;
     int dy = int(gl_FragCoord.y) & 3;
-    float off = ditherMatrix[dy][dx];
+    float off = ditherMatrix[dx][dy];
     vec3 c8 = c * 255.0 + off;
     vec3 c5 = clamp(floor(c8 / 8.0), 0.0, 31.0);
     return c5 / 31.0;
