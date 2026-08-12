@@ -59,6 +59,14 @@ static void DispatchPackets(u_long* buf, int len) {
         int code = (int)(buf[i] >> 24) & 0xFF;
         // https://psx-spx.consoledev.net/graphicsprocessingunitgpu/#gpu-render-polygon-commands
         switch (code) {
+        case 0xFF:
+            /* Native OT links are pointer-sized.  The flattened 64-bit walk
+             * can retain the terminal link word after the last packet; it is
+             * a DMA-chain terminator, not a GP0 command. */
+            if (i == len - 1)
+                break;
+            WARNF("unsupported command %02X", code);
+            break;
         case 0x00:
             // empty?!
             break;
