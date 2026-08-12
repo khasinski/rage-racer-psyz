@@ -192,20 +192,6 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
         WARNF("mask not supported (mask:%08X)", mask);
     }
     DR_ENV* env = (DR_ENV*)(uintptr_t)p1;
-    if (sizeof(u_long) == 4) {
-        // fast path for 32-bit systems
-        while (1) {
-            int env_len = getlen(env);
-            if (env_len > 0) {
-                DispatchPackets((u_long*)env->code, env_len);
-            }
-            if (isendprim(env)) {
-                break;
-            }
-            env = (DR_ENV*)nextPrim(env);
-        }
-        return 0;
-    }
     while (1) {
         int env_len = getlen(env);
         if (env_len > 0x100) {
@@ -216,7 +202,7 @@ static int GPU_Enqueue(u_long p1, u_long p2) {
         if (queue_len + env_len > LEN(queue_buf)) {
             Psyz_GpuExeque();
         }
-        if (sizeof(u_long) == 8) {
+        {
             int canonical_len = CanonicalizePacket(
                 env, queue_buf + queue_len, LEN(queue_buf) - queue_len);
             if (canonical_len < 0) {
