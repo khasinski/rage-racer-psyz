@@ -515,6 +515,15 @@ static u_long keyb_p1[] = {
  * pad sample so a short key tap cannot disappear between PS1 VSync polls. */
 static unsigned int keyboard_held_mask;
 static unsigned int keyboard_pressed_latch;
+static bool host_input_enabled = true;
+
+void Psyz_SetHostInputEnabled(int enabled) {
+    host_input_enabled = enabled != 0;
+    if (!host_input_enabled) {
+        keyboard_held_mask = 0;
+        keyboard_pressed_latch = 0;
+    }
+}
 
 static unsigned int KeyboardMaskForScancode(SDL_Scancode scancode) {
     unsigned int mask = 0;
@@ -623,6 +632,9 @@ static unsigned int SinglePadRead(int id) {
     }
 
     u_long pressed = 0;
+    if (!host_input_enabled) {
+        return 0;
+    }
     if (id == 0) {
         pressed |= PadRead_Keyboard(keyb_p1, LEN(keyb_p1));
     }

@@ -77,6 +77,9 @@ void Psyz_PadsSet(int port, const char* src, int len);
 /** Override one keyboard binding. Button indices follow the 16 PAD bits. */
 int Psyz_SetKeyboardKey(int button_index, const char* key_name);
 
+/** Ignore physical keyboard/gamepad state while retaining injected pad frames. */
+void Psyz_SetHostInputEnabled(int enabled);
+
 #ifdef __cplusplus
 }
 #endif
