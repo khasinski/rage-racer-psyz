@@ -68,13 +68,29 @@ static unsigned int HashTracePixels(const unsigned short* pixels, size_t count) 
 
 static void TraceVramLoad(const RECT* rect, const u_long* pixels) {
     size_t count;
+    size_t nonzero = 0;
+    size_t i;
     if (!getenv("RAGE_GPU_VRAM_TRANSFER_TRACE")) return;
     count = (size_t)(unsigned short)rect->w * (unsigned short)rect->h;
+    for (i = 0; i < count; i++) {
+        if (((const unsigned short*)pixels)[i] != 0) nonzero++;
+    }
     fprintf(stderr,
             "vram-transfer kind=load scene=%d timer=%d rect=%d,%d,%d,%d "
-            "pixels=%zu hash=%08x\n",
+            "pixels=%zu nonzero=%zu hash=%08x\n",
             trace_scene, trace_timer, rect->x, rect->y, rect->w, rect->h,
-            count, HashTracePixels((const unsigned short*)pixels, count));
+            count, nonzero,
+            HashTracePixels((const unsigned short*)pixels, count));
+}
+
+static void TraceVramTransfer(const char* kind, const RECT* rect,
+                              int dstX, int dstY) {
+    if (!getenv("RAGE_GPU_VRAM_TRANSFER_TRACE")) return;
+    fprintf(stderr,
+            "vram-transfer kind=%s scene=%d timer=%d rect=%d,%d,%d,%d "
+            "dst=%d,%d\n",
+            kind, trace_scene, trace_timer, rect->x, rect->y, rect->w, rect->h,
+            dstX, dstY);
 }
 
 static void DumpTraceVram(void) {
@@ -252,6 +268,7 @@ static void DispatchPackets(u_long* buf, int len) {
             rect.h = (short)((buf[i + 3] >> 16) & 0xFFFF);
             x = (short)(buf[i + 2] & 0xFFFF);
             y = (short)((buf[i + 2] >> 16) & 0xFFFF);
+            TraceVramTransfer("move", &rect, x, y);
             Draw_MoveImage(&rect, x, y);
             i += 3;
             break;
@@ -385,6 +402,7 @@ static int GPU_DataWrite(u_long p1, u_long p2) {
 }
 static int GPU_DataRead(u_long p1, u_long p2) {
     Psyz_GpuExeque();
+    TraceVramTransfer("store", (RECT*)(uintptr_t)p1, -1, -1);
     Draw_StoreImage((RECT*)(uintptr_t)p1, (u_long*)(uintptr_t)p2);
     return 0;
 }
