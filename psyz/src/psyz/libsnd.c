@@ -34,9 +34,14 @@ typedef struct PsyzSeqState {
 
 static PsyzSeqState psyz_sequences[PSYZ_SEQ_SLOTS];
 static unsigned long long psyz_seq_note_on_count;
+static unsigned long long psyz_snd_pitch_update_count;
 
 unsigned long long Psyz_SeqNoteOnCount(void) {
     return psyz_seq_note_on_count;
+}
+
+unsigned long long Psyz_SndPitchUpdateCount(void) {
+    return psyz_snd_pitch_update_count;
 }
 
 static u32 read_variable_length(const u8** cursor) {
@@ -409,13 +414,72 @@ void _SsVmSeqKeyOff(s16 seq_sep_num) {
 }
 
 short SsUtKeyOffV(short voice) {
-    if (voice < 0 || voice >= _SsVmMaxVoice)
+    if (voice < 0 || voice >= NUM_VOICES)
         return -1;
     _svm_cur.voice = voice;
     _SsVmKeyOffNow(0);
     _svm_voice[voice].auto_pan = 0;
     _svm_voice[voice].auto_vol = 0;
     return 0;
+}
+
+static short set_voice_pitch(short voice, short vabId, short prog,
+                             short note, short fine) {
+    if (voice < 0 || voice >= NUM_VOICES ||
+        _svm_voice[voice].vabId != vabId ||
+        _svm_voice[voice].prog != prog || _SsVmVSetUp(vabId, prog) != 0)
+        return -1;
+    _svm_cur.tone = _svm_voice[voice].tone;
+    _svm_cur.field_7_fake_program = _svm_voice[voice].unk10;
+    _svm_sreg_buf[voice].pitch = note2pitch2(note, fine);
+    _svm_sreg_dirty[voice] |= 4;
+    _svm_voice[voice].note = note;
+    _svm_voice[voice].unk04 = _svm_sreg_buf[voice].pitch;
+    psyz_snd_pitch_update_count++;
+    return 0;
+}
+
+short SsUtChangePitch(short voice, short vabId, short prog, short old_note,
+                      short old_fine, short new_note, short new_fine) {
+    (void)old_fine;
+    if (voice < 0 || voice >= NUM_VOICES ||
+        _svm_voice[voice].note != old_note)
+        return -1;
+    return set_voice_pitch(voice, vabId, prog, new_note, new_fine);
+}
+
+short SsUtPitchBend(
+    short voice, short vabId, short prog, short note, short pbend) {
+    int bend;
+    int scaled;
+    int base;
+    int fine;
+    int tone_index;
+    (void)note;
+    if (voice < 0 || voice >= NUM_VOICES ||
+        _svm_voice[voice].unke != 0x21 ||
+        _svm_voice[voice].vabId != vabId ||
+        _svm_voice[voice].prog != prog || _SsVmVSetUp(vabId, prog) != 0)
+        return -1;
+
+    /* Match PsyQ's asymmetric bend calculation: 64 is centre, and each
+     * side is scaled by the selected tone's VAB bend limit. */
+    tone_index = _svm_voice[voice].unk10 * 16 + _svm_voice[voice].tone;
+    bend = pbend - 64;
+    base = _svm_voice[voice].note;
+    fine = 0;
+    if (bend > 0) {
+        scaled = bend * _svm_tn[tone_index].pbmax;
+        base += scaled / 63;
+        fine = (scaled % 63) * 2;
+    } else if (bend < 0) {
+        scaled = bend * _svm_tn[tone_index].pbmin;
+        /* Arithmetic division toward minus infinity, as in the MIPS code. */
+        int quotient = scaled >= 0 ? scaled / 64 : -((-scaled + 63) / 64);
+        base += quotient - 1;
+        fine = (scaled - quotient * 64) * 2 + 127;
+    }
+    return set_voice_pitch(voice, vabId, prog, base, fine);
 }
 
 void vmNoiseOn(char voice) { NOT_IMPLEMENTED; }
