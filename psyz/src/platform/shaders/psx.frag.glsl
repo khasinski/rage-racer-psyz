@@ -19,7 +19,12 @@ uvec2 resolveTexel() {
     // The PS1 rasterizer consumes the integer part of its fixed-point UV
     // accumulator. Rounding to nearest moves coherent areas onto adjacent
     // palette indices (often transparent/black index zero).
-    uvec2 texel = uvec2(clamp(floor(rawUV), vec2(0.0), vec2(255.0)));
+    // Stabilize values which are mathematically integral but arrive a few
+    // float ULPs below the boundary after hardware interpolation. Half of one
+    // 16.16 accumulator unit cannot advance a distinct PS1 fixed-point value.
+    const vec2 fixedHalfUnit = vec2(1.0 / 131072.0);
+    uvec2 texel = uvec2(clamp(floor(rawUV + fixedHalfUnit),
+                              vec2(0.0), vec2(255.0)));
     return (texel & texWindow.xy) | texWindow.zw;
 }
 
