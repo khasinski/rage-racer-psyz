@@ -982,17 +982,23 @@ int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
 static void UpdateScissor() {
     int width = draw_area_end.x - draw_area_start.x + 1;
     int height = draw_area_end.y - draw_area_start.y + 1;
+
+    /* A draw-area change terminates the previous primitive batch even when
+     * the new PS1 area is empty.  Keeping the old scissor in that case lets
+     * primitives queued for a zero-height area draw over the whole previous
+     * viewport when the next valid area is installed. */
+    Draw_FlushBuffer();
     if (width <= 0 || height <= 0) {
-        // Draw_SetAreaStart gets called before Draw_SetAreaEnd, it happens
-        // that either width or height are zero. Just ignore the call.
+        scissor_rect.x = draw_area_start.x;
+        scissor_rect.y = draw_area_start.y;
+        scissor_rect.w = 0;
+        scissor_rect.h = 0;
         return;
     }
 
     if (!sdl3_window || !InitPlatform()) {
         return;
     }
-    Draw_FlushBuffer();
-
     scissor_rect.x = draw_area_start.x;
     scissor_rect.y = draw_area_start.y;
     scissor_rect.w = width;
@@ -2029,6 +2035,10 @@ void Draw_ResetBuffer(void) {
 
 void Draw_FlushBuffer(void) {
     if (n_vertices == 0) {
+        return;
+    }
+    if (scissor_rect.w <= 0 || scissor_rect.h <= 0) {
+        Draw_ResetBuffer();
         return;
     }
     SDL_GPUCommandBuffer* cmd = AcquireCmd();
