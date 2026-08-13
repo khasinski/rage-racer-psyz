@@ -1270,7 +1270,7 @@ static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
     *v = (u16)((fixed_v >> 16) & 0xff);
 }
 
-static void ModernTextureSample(const Vertex p[3], int x, int y,
+static bool ModernTextureSample(const Vertex p[3], int x, int y,
                                 u16* u, u16* v) {
     double ax = p[0].x + draw_offset.x;
     double ay = p[0].y + draw_offset.y;
@@ -1283,7 +1283,7 @@ static void ModernTextureSample(const Vertex p[3], int x, int y,
     if (determinant == 0.0) {
         *u = p[0].u;
         *v = p[0].v;
-        return;
+        return true;
     }
     double du_dx = ((p[1].u - p[0].u) * (cy - ay) -
                     (p[2].u - p[0].u) * (by - ay)) / determinant;
@@ -1293,12 +1293,17 @@ static void ModernTextureSample(const Vertex p[3], int x, int y,
                     (p[2].v - p[0].v) * (by - ay)) / determinant;
     double dv_dy = ((bx - ax) * (p[2].v - p[0].v) -
                     (cx - ax) * (p[1].v - p[0].v)) / determinant;
-    int sample_u = (int)floor(p[0].u + du_dx * (x - ax) +
-                              du_dy * (y - ay) + 1e-7);
-    int sample_v = (int)floor(p[0].v + dv_dx * (x - ax) +
-                              dv_dy * (y - ay) + 1e-7);
+    double raw_u = p[0].u + du_dx * (x - ax) + du_dy * (y - ay);
+    double raw_v = p[0].v + dv_dx * (x - ax) + dv_dy * (y - ay);
+    int sample_u = (int)floor(raw_u);
+    int sample_v = (int)floor(raw_v);
     *u = (u16)CLAMP(sample_u, 0, 255);
     *v = (u16)CLAMP(sample_v, 0, 255);
+    /* A mathematically integral UV can arrive infinitesimally below the
+     * boundary after float interpolation. The fragment shader then floors to
+     * the previous texel, while the PS1 fixed accumulator remains exact. */
+    return fabs(raw_u - round(raw_u)) < 1e-7 ||
+           fabs(raw_v - round(raw_v)) < 1e-7;
 }
 
 static bool TextureSamplesDiffer(const Vertex source[4], u16 expected_u,
@@ -1442,9 +1447,11 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
             if (!correct) {
                 const Vertex* modern = covered1 ? vertices1 : vertices0;
                 u16 modern_u, modern_v;
-                ModernTextureSample(modern, x, y, &modern_u, &modern_v);
-                correct = TextureSamplesDiffer(source, expected_u, expected_v,
-                                               modern_u, modern_v);
+                bool unstable = ModernTextureSample(modern, x, y,
+                                                     &modern_u, &modern_v);
+                correct = unstable ||
+                    TextureSamplesDiffer(source, expected_u, expected_v,
+                                         modern_u, modern_v);
             }
             if (correct)
                 Draw_EnqueueCompatibilityPixel(source, x, y, true,

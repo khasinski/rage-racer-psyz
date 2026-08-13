@@ -13,6 +13,9 @@ abort "textured correction does not use the PS1 fixed-point UV integer part" unl
 abort "textured correction does not reproduce truncated 16.16 UV steps" unless
   source.include?("step_u") && source.include?("step_v") &&
   source.include?("TextureSamplesDiffer")
+abort "textured correction ignores unstable integral float UV boundaries" unless
+  source.include?("fabs(raw_u - round(raw_u))") &&
+  source.include?("bool unstable = ModernTextureSample")
 abort "obsolete axis-aligned geometry strip is still active" if
   source.include?("uStep") || source.include?("Right endpoint:")
 
