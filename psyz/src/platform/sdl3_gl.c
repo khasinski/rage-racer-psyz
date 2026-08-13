@@ -748,6 +748,37 @@ unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h) {
     return pixels;
 }
 
+unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h) {
+    size_t count;
+    u8* rgba;
+    unsigned short* pixels;
+    if (vram_fbo == 0) {
+        *w = *h = 0;
+        return NULL;
+    }
+    Draw_FlushBuffer();
+    *w = VRAM_W;
+    *h = VRAM_H;
+    count = (size_t)*w * *h;
+    rgba = GetVramConvertBuffer(count * 4);
+    pixels = malloc(count * sizeof(*pixels));
+    if (!rgba || !pixels) {
+        free(pixels);
+        return NULL;
+    }
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, vram_fbo);
+    glReadPixels(0, 0, *w, *h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    if (glGetError() != GL_NO_ERROR) {
+        free(pixels);
+        return NULL;
+    }
+    ConvertRgba8888ToRgb5551(rgba, pixels, count);
+    BindDrawFbo();
+    return pixels;
+}
+
 unsigned Psyz_VideoGetInternalResolution(void) { return internal_res; }
 
 int Psyz_VideoSetInternalResolution(unsigned multiplier) {

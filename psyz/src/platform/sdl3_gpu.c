@@ -862,6 +862,31 @@ unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h) {
     return pixels;
 }
 
+unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h) {
+    size_t pixels;
+    u8* rgba;
+    unsigned short* output;
+    if (!device || !vram_render) {
+        *w = *h = 0;
+        return NULL;
+    }
+    Draw_FlushBuffer();
+    *w = VRAM_W;
+    *h = VRAM_H;
+    pixels = (size_t)*w * *h;
+    rgba = malloc(pixels * 4);
+    output = malloc(pixels * sizeof(*output));
+    if (!rgba || !output ||
+        !DownloadVramRegionAsRGBA8888(0, 0, *w, *h, rgba)) {
+        free(rgba);
+        free(output);
+        return NULL;
+    }
+    ConvertRgba8888ToRgb5551(rgba, output, pixels);
+    free(rgba);
+    return output;
+}
+
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
     const int y_offset = (240 - h) / 2;
     if (!pixels || w <= 0 || h <= 0 || w > VRAM_W || h > 240 ||

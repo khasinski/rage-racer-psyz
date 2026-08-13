@@ -54,6 +54,33 @@ static u_long queue_buf[0x4000];
 static int trace_scene = -1;
 static int trace_timer = -1;
 
+static void DumpTraceVram(void) {
+    static int dumped;
+    const char* path;
+    unsigned short* pixels;
+    FILE* file;
+    int width, height;
+    if (dumped) return;
+    path = getenv("RAGE_GPU_GP0_TRACE_VRAM");
+    if (!path || !*path) return;
+    pixels = Psyz_VideoAllocCapturedVram(&width, &height);
+    if (!pixels || width != 1024 || height != 512) {
+        ERRORF("cannot capture trace VRAM (pixels=%p size=%dx%d)",
+               (void*)pixels, width, height);
+        free(pixels);
+        return;
+    }
+    file = fopen(path, "wb");
+    if (file) {
+        fwrite(pixels, sizeof(*pixels), (size_t)width * height, file);
+        fclose(file);
+        dumped = 1;
+    } else {
+        ERRORF("cannot open trace VRAM dump %s", path);
+    }
+    free(pixels);
+}
+
 void Psyz_GpuTraceContext(int scene, int timer) {
     trace_scene = scene;
     trace_timer = timer;
@@ -247,6 +274,11 @@ int Psyz_GpuExeque() {
     DispatchPackets(queue_buf, queue_len);
     Draw_FlushBuffer();
     Draw_ExequeSync();
+    if ((!getenv("RAGE_GPU_GP0_TRACE_SCENE") ||
+         trace_scene == (int)strtol(getenv("RAGE_GPU_GP0_TRACE_SCENE"), NULL, 0)) &&
+        (!getenv("RAGE_GPU_GP0_TRACE_TIMER") ||
+         trace_timer == (int)strtol(getenv("RAGE_GPU_GP0_TRACE_TIMER"), NULL, 0)))
+        DumpTraceVram();
     queue_len = 0;
     return queue_len;
 }

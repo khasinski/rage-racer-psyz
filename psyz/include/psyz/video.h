@@ -214,6 +214,10 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h);
  * rather than the page currently selected for display. Diagnostic only. */
 unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h);
 
+/* Capture all 1024x512 PS1 VRAM pixels as little-endian RGB5551 words.
+ * Diagnostic only; caller owns the returned buffer. */
+unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h);
+
 /* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
 
