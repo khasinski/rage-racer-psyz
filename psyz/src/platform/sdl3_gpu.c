@@ -1485,16 +1485,17 @@ void Draw_FlushBuffer(void) {
         .transfer_buffer = vtx_transfer, .offset = idx_offset};
     const SDL_GPUBufferRegion idx_dst = {.buffer = ibuf, .size = idx_size};
     SDL_UploadToGPUBuffer(copy, &idx_src, &idx_dst, true);
-    if (batch_has_texture && vram_dirty.w > 0 && vram_dirty.h > 0) {
-        const SDL_GPUTextureLocation vram_src = {.texture = vram_render,
-                                                 .x = (Uint32)vram_dirty.x,
-                                                 .y = (Uint32)vram_dirty.y};
-        const SDL_GPUTextureLocation vram_dst = {.texture = vram_sample,
-                                                 .x = (Uint32)vram_dirty.x,
-                                                 .y = (Uint32)vram_dirty.y};
+    if (batch_has_texture) {
+        /* vram_render is both the framebuffer and PS1 VRAM, while shaders must
+         * sample a separate texture to avoid a render-target feedback loop.
+         * Mirror the complete PS1 VRAM before every textured batch. Tracking
+         * only a bounding dirty rectangle is not sufficient: render passes,
+         * uploads and moves can reset or supersede that rectangle before a
+         * later batch samples an otherwise untouched texture page or CLUT. */
+        const SDL_GPUTextureLocation vram_src = {.texture = vram_render};
+        const SDL_GPUTextureLocation vram_dst = {.texture = vram_sample};
         SDL_CopyGPUTextureToTexture(
-            copy, &vram_src, &vram_dst, (Uint32)vram_dirty.w,
-            (Uint32)vram_dirty.h, 1, false);
+            copy, &vram_src, &vram_dst, VRAM_W, VRAM_H, 1, false);
         ResetVramDirty();
     }
     SDL_EndGPUCopyPass(copy);
