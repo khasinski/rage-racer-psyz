@@ -2,16 +2,20 @@
 # frozen_string_literal: true
 
 source = File.read(ARGV.fetch(0))
-block = source[/if \(isTextured && nVertices == 4 &&.*?nIndices \+= 6;\n            \}/m]
-abort "textured axis-aligned FT4 has no PS1 right-edge coverage strip" unless block
-abort "right-edge strip does not preserve endpoint U accumulator semantics" unless
-  block.include?("uStep") && block.include?("edge[0].u = edge[1].u") &&
-  block.include?("edge[2].u = edge[3].u")
-abort "right-edge strip unexpectedly expands the bottom endpoint" if
-  block.match?(/\.y\+\+/)
+%w[PsxTextureTriangleSpan PsxTextureSpanSample
+   Draw_FillTexturedQuadScanlineGaps].each do |name|
+  abort "textured FT4 raster compatibility helper #{name} is missing" unless
+    source.include?(name)
+end
+abort "textured correction does not use the PS1 fixed-point UV integer part" unless
+  source.include?("fixed_u >> 16") && source.include?("fixed_v >> 16")
+abort "textured correction scans polygon interiors instead of span endpoints" unless
+  source.include?("span0.x_start, span0.x_end") &&
+  source.include?("span1.x_start, span1.x_end")
+abort "obsolete axis-aligned geometry strip is still active" if
+  source.include?("uStep") || source.include?("Right endpoint:")
 
-trace = source.index("TraceGpuPrimitive(vertex_cur, nVertices")
-strip = source.index("if (isTextured && nVertices == 4")
-abort "primitive trace sees synthetic edge vertices" unless trace && strip && trace < strip
+correction = source.index("Draw_FillTexturedQuadScanlineGaps(compatibility_quad)")
+abort "textured compatibility correction is not enqueued" unless correction
 
-puts "textured FT4 right endpoint is inclusive without stretching original UVs"
+puts "textured FT4 scanline endpoints preserve PS1 UVs without stretching geometry"

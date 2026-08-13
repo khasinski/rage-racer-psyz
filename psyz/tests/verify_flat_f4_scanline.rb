@@ -6,13 +6,14 @@ source = File.read(ARGV.fetch(0))
 %w[PsxFlatTriangleSpan ModernTriangleContains Draw_FillFlatQuadScanlineGaps].each do |name|
   abort "missing flat F4 raster compatibility helper #{name}" unless source.include?(name)
 end
-abort "flat F4 correction is not restricted to untextured flat quads" unless
-  source.include?("!isTextured && !isGouraud")
+abort "F4 correction is not restricted to opaque flat quads" unless
+  source.include?("!isGouraud && nVertices == 4") &&
+  source.include?("!(code & SEMITRANSP)")
 abort "flat F4 correction can redraw already-covered Metal pixels" unless
-  source.include?("bool missing = expected && !covered")
+  source.include?("if (expected && !covered)")
 abort "flat F4 correction does not preserve primitive order" unless
   source.index("Draw_EnqueueBuffer(nVertices, nIndices)") <
-  source.index("Draw_FillFlatQuadScanlineGaps(flat_quad)")
+  source.index("Draw_FillFlatQuadScanlineGaps(compatibility_quad)")
 
 # Rage Racer's real tachometer F4.  Its second triangle produces an inclusive
 # PS1 scanline edge which Metal's top-left rule rejects.  Keep this packet as a
