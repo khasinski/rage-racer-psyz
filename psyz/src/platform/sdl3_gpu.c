@@ -1115,6 +1115,13 @@ typedef struct {
     int x, y;
 } RasterPoint;
 
+typedef struct {
+    int x_start, x_end;
+    double x_left, x_right;
+    double u_left, u_right;
+    double v_left, v_right;
+} RasterTextureSpan;
+
 static bool PsxFlatTriangleSpan(const RasterPoint input[3], int y,
                                 int* x_start, int* x_end) {
     RasterPoint v[3] = {input[0], input[1], input[2]};
@@ -1168,6 +1175,11 @@ static bool ModernTriangleContains(const RasterPoint p[3], int x, int y) {
     long long e2 = RasterEdge(p[2], p[0], x, y);
     long long area = RasterEdge(p[0], p[1], p[2].x, p[2].y);
     if (area == 0) return false;
+    /* A sample exactly at a polygon vertex touches two directed edges. Metal
+     * can reject that endpoint even when the individual edge predicates below
+     * are inclusive; treating it as uncovered is safe for the opaque
+     * compatibility path and lets the PS1 span decide the final texel. */
+    if ((e0 == 0) + (e1 == 0) + (e2 == 0) >= 2) return false;
     for (int i = 0; i < 3; i++) {
         long long edge = i == 0 ? e0 : i == 1 ? e1 : e2;
         RasterPoint a = p[i];
@@ -1183,6 +1195,93 @@ static bool ModernTriangleContains(const RasterPoint p[3], int x, int y) {
         }
     }
     return true;
+}
+
+static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
+                                   RasterTextureSpan* span) {
+    Vertex v[3] = {input[0], input[1], input[2]};
+    for (int i = 1; i < 3; i++) {
+        Vertex key = v[i];
+        int j = i;
+        while (j > 0 && v[j - 1].y + draw_offset.y >
+                            key.y + draw_offset.y) {
+            v[j] = v[j - 1];
+            j--;
+        }
+        v[j] = key;
+    }
+    int y0 = v[0].y + draw_offset.y;
+    int y1 = v[1].y + draw_offset.y;
+    int y2 = v[2].y + draw_offset.y;
+    if (y2 == y0 || y < y0 || y > y2) return false;
+
+    double t1;
+    if (y < y1) {
+        if (y1 == y0) return false;
+        t1 = (double)(y - y0) / (double)(y1 - y0);
+        span->x_left = v[0].x + draw_offset.x + (v[1].x - v[0].x) * t1;
+        span->u_left = v[0].u + (v[1].u - v[0].u) * t1;
+        span->v_left = v[0].v + (v[1].v - v[0].v) * t1;
+    } else {
+        if (y2 == y1) return false;
+        t1 = (double)(y - y1) / (double)(y2 - y1);
+        span->x_left = v[1].x + draw_offset.x + (v[2].x - v[1].x) * t1;
+        span->u_left = v[1].u + (v[2].u - v[1].u) * t1;
+        span->v_left = v[1].v + (v[2].v - v[1].v) * t1;
+    }
+    double t2 = (double)(y - y0) / (double)(y2 - y0);
+    span->x_right = v[0].x + draw_offset.x + (v[2].x - v[0].x) * t2;
+    span->u_right = v[0].u + (v[2].u - v[0].u) * t2;
+    span->v_right = v[0].v + (v[2].v - v[0].v) * t2;
+    if (span->x_left > span->x_right) {
+        double swap = span->x_left;
+        span->x_left = span->x_right;
+        span->x_right = swap;
+        swap = span->u_left;
+        span->u_left = span->u_right;
+        span->u_right = swap;
+        swap = span->v_left;
+        span->v_left = span->v_right;
+        span->v_right = swap;
+    }
+    span->x_start = (int)ceil(span->x_left);
+    span->x_end = (int)floor(span->x_right);
+    return span->x_start <= span->x_end;
+}
+
+static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
+                                 u16* u, u16* v) {
+    double width = span->x_right - span->x_left;
+    double t = width > 0.0 ? (x - span->x_left) / width : 0.0;
+    double sample_u = span->u_left + (span->u_right - span->u_left) * t;
+    double sample_v = span->v_left + (span->v_right - span->v_left) * t;
+    int fixed_u = (int)(sample_u * 65536.0);
+    int fixed_v = (int)(sample_v * 65536.0);
+    *u = (u16)((fixed_u >> 16) & 0xff);
+    *v = (u16)((fixed_v >> 16) & 0xff);
+}
+
+static void Draw_EnqueueCompatibilityPixel(const Vertex source[4], int x,
+                                           int y, bool textured, u16 u,
+                                           u16 v) {
+    Draw_EnsureBufferWillNotOverflow(4, 6);
+    Vertex* q = vertex_cur;
+    q[0] = q[1] = q[2] = q[3] = source[0];
+    q[0].x = q[2].x = (short)(x - draw_offset.x);
+    q[1].x = q[3].x = (short)(x + 1 - draw_offset.x);
+    q[0].y = q[1].y = (short)(y - draw_offset.y);
+    q[2].y = q[3].y = (short)(y + 1 - draw_offset.y);
+    if (textured) {
+        q[0].u = q[1].u = q[2].u = q[3].u = u;
+        q[0].v = q[1].v = q[2].v = q[3].v = v;
+    }
+    index_cur[0] = n_vertices + 0;
+    index_cur[1] = n_vertices + 1;
+    index_cur[2] = n_vertices + 2;
+    index_cur[3] = n_vertices + 1;
+    index_cur[4] = n_vertices + 3;
+    index_cur[5] = n_vertices + 2;
+    Draw_EnqueueBuffer(4, 6);
 }
 
 /* Metal rasterizes a PS1 F4 as two conventional triangles.  The PS1 instead
@@ -1211,50 +1310,84 @@ static void Draw_FillFlatQuadScanlineGaps(const Vertex source[4]) {
     if (y_min > y_max) return;
 
     for (int y = y_min; y <= y_max; y++) {
-        int lo0, hi0, lo1, hi1;
+        int lo0 = 0, hi0 = 0, lo1 = 0, hi1 = 0;
         bool span0 = PsxFlatTriangleSpan(tri0, y, &lo0, &hi0);
         bool span1 = PsxFlatTriangleSpan(tri1, y, &lo1, &hi1);
         if (!span0 && !span1) continue;
-        int x_min = span0 ? lo0 : lo1;
-        int x_max = span0 ? hi0 : hi1;
-        if (span1) {
-            if (lo1 < x_min) x_min = lo1;
-            if (hi1 > x_max) x_max = hi1;
+        int candidates[4] = {lo0, hi0, lo1, hi1};
+        int candidate_count = (span0 ? 2 : 0) + (span1 ? 2 : 0);
+        if (!span0 && span1) {
+            candidates[0] = lo1;
+            candidates[1] = hi1;
         }
-        if (x_min < draw_area_start.x) x_min = draw_area_start.x;
-        if (x_min < 0) x_min = 0;
-        if (x_max > draw_area_end.x) x_max = draw_area_end.x;
-        if (x_max >= VRAM_W) x_max = VRAM_W - 1;
-        if (x_min > x_max) continue;
-
-        int run_start = -1;
-        for (int x = x_min; x <= x_max + 1; x++) {
-            bool expected = x <= x_max &&
+        for (int i = 0; i < candidate_count; i++) {
+            int x = candidates[i];
+            bool duplicate = false;
+            for (int j = 0; j < i; j++) duplicate |= candidates[j] == x;
+            if (duplicate || x < draw_area_start.x || x > draw_area_end.x ||
+                x < 0 || x >= VRAM_W) continue;
+            bool expected =
                 ((span0 && x >= lo0 && x <= hi0) ||
                  (span1 && x >= lo1 && x <= hi1));
-            bool covered = x <= x_max &&
-                (ModernTriangleContains(tri0, x, y) ||
-                 ModernTriangleContains(tri1, x, y));
-            bool missing = expected && !covered;
-            if (missing && run_start < 0) {
-                run_start = x;
-            } else if (!missing && run_start >= 0) {
-                Draw_EnsureBufferWillNotOverflow(4, 6);
-                Vertex* q = vertex_cur;
-                q[0] = q[1] = q[2] = q[3] = source[0];
-                q[0].x = q[2].x = (short)(run_start - draw_offset.x);
-                q[1].x = q[3].x = (short)(x - draw_offset.x);
-                q[0].y = q[1].y = (short)(y - draw_offset.y);
-                q[2].y = q[3].y = (short)(y + 1 - draw_offset.y);
-                index_cur[0] = n_vertices + 0;
-                index_cur[1] = n_vertices + 1;
-                index_cur[2] = n_vertices + 2;
-                index_cur[3] = n_vertices + 1;
-                index_cur[4] = n_vertices + 3;
-                index_cur[5] = n_vertices + 2;
-                Draw_EnqueueBuffer(4, 6);
-                run_start = -1;
-            }
+            bool covered = ModernTriangleContains(tri0, x, y) ||
+                           ModernTriangleContains(tri1, x, y);
+            if (expected && !covered)
+                Draw_EnqueueCompatibilityPixel(source, x, y, false, 0, 0);
+        }
+    }
+}
+
+static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
+    RasterPoint p[4];
+    for (int i = 0; i < 4; i++) {
+        p[i].x = source[i].x + draw_offset.x;
+        p[i].y = source[i].y + draw_offset.y;
+    }
+    const RasterPoint points0[3] = {p[0], p[1], p[2]};
+    const RasterPoint points1[3] = {p[1], p[2], p[3]};
+    const Vertex vertices0[3] = {source[0], source[1], source[2]};
+    const Vertex vertices1[3] = {source[1], source[2], source[3]};
+    int y_min = p[0].y, y_max = p[0].y;
+    for (int i = 1; i < 4; i++) {
+        if (p[i].y < y_min) y_min = p[i].y;
+        if (p[i].y > y_max) y_max = p[i].y;
+    }
+    if (y_min < draw_area_start.y) y_min = draw_area_start.y;
+    if (y_min < 0) y_min = 0;
+    if (y_max > draw_area_end.y) y_max = draw_area_end.y;
+    if (y_max >= VRAM_H) y_max = VRAM_H - 1;
+    if (y_min > y_max) return;
+
+    for (int y = y_min; y <= y_max; y++) {
+        RasterTextureSpan span0 = {0}, span1 = {0};
+        bool has0 = PsxTextureTriangleSpan(vertices0, y, &span0);
+        bool has1 = PsxTextureTriangleSpan(vertices1, y, &span1);
+        if (!has0 && !has1) continue;
+        int candidates[4] = {span0.x_start, span0.x_end,
+                             span1.x_start, span1.x_end};
+        int candidate_count = (has0 ? 2 : 0) + (has1 ? 2 : 0);
+        if (!has0 && has1) {
+            candidates[0] = span1.x_start;
+            candidates[1] = span1.x_end;
+        }
+        for (int i = 0; i < candidate_count; i++) {
+            int x = candidates[i];
+            bool duplicate = false;
+            for (int j = 0; j < i; j++) duplicate |= candidates[j] == x;
+            if (duplicate || x < draw_area_start.x || x > draw_area_end.x ||
+                x < 0 || x >= VRAM_W) continue;
+            bool expected0 = has0 && x >= span0.x_start && x <= span0.x_end;
+            bool expected1 = has1 && x >= span1.x_start && x <= span1.x_end;
+            bool covered = ModernTriangleContains(points0, x, y) ||
+                           ModernTriangleContains(points1, x, y);
+            if ((!expected0 && !expected1) || covered) continue;
+
+            /* The PS1 submits triangle 0 followed by triangle 1. If their
+             * inclusive spans overlap, triangle 1 owns the final texel. */
+            const RasterTextureSpan* sample = expected1 ? &span1 : &span0;
+            u16 u, v;
+            PsxTextureSpanSample(sample, x, &u, &v);
+            Draw_EnqueueCompatibilityPixel(source, x, y, true, u, v);
         }
     }
 }
@@ -1274,8 +1407,6 @@ int Draw_PushPrim(u_long* packets, int max_len) {
     /* writePacket stores a Gouraud packet's following vertex color through
      * v + 1.  On the final vertex that is a parser scratch write beyond the
      * four vertices eventually enqueued, so reserve one extra slot. */
-    /* An axis-aligned four-point polygon may need a right endpoint strip to
-     * reproduce the PS1's inclusive horizontal scan conversion. */
     Draw_EnsureBufferWillNotOverflow(isGouraud ? 9 : 8, 12);
     v = vertex_cur;
     if (isShadeTex) {
@@ -1346,46 +1477,21 @@ int Draw_PushPrim(u_long* packets, int max_len) {
                               draw_offset.y - (draw_area_start.y / 240) * 240,
                               draw_area_start.x, draw_area_start.y,
                               draw_area_end.x, draw_area_end.y);
-            if (isTextured && nVertices == 4 &&
-                vertex_cur[0].y == vertex_cur[1].y &&
-                vertex_cur[2].y == vertex_cur[3].y &&
-                vertex_cur[0].x == vertex_cur[2].x &&
-                vertex_cur[1].x == vertex_cur[3].x) {
-                Vertex* edge = &vertex_cur[4];
-                unsigned short edgeBase = n_vertices + 4;
-
-                /* Right endpoint: both sides carry the original right-edge
-                 * attributes, so widening coverage cannot alter UV/color. */
-                edge[0] = vertex_cur[1];
-                edge[1] = vertex_cur[1];
-                edge[2] = vertex_cur[3];
-                edge[3] = vertex_cur[3];
-                {
-                    int uStep = vertex_cur[1].u > vertex_cur[0].u ? -1 :
-                                vertex_cur[1].u < vertex_cur[0].u ? 1 : 0;
-                    edge[0].u = edge[1].u = (u16)(edge[0].u + uStep);
-                    edge[2].u = edge[3].u = (u16)(edge[2].u + uStep);
-                }
-                edge[1].x++;
-                edge[3].x++;
-                index_cur[6] = edgeBase + 0;
-                index_cur[7] = edgeBase + 1;
-                index_cur[8] = edgeBase + 2;
-                index_cur[9] = edgeBase + 1;
-                index_cur[10] = edgeBase + 3;
-                index_cur[11] = edgeBase + 2;
-                nVertices += 4;
-                nIndices += 6;
+            Vertex compatibility_quad[4];
+            bool fill_quad_gaps = !isGouraud && nVertices == 4 &&
+                                  !(code & SEMITRANSP);
+            if (fill_quad_gaps) {
+                memcpy(compatibility_quad, vertex_cur,
+                       sizeof(compatibility_quad));
             }
-            Vertex flat_quad[4];
-            bool fill_flat_quad_gaps = !isTextured && !isGouraud &&
-                                       nVertices == 4;
-            if (fill_flat_quad_gaps) {
-                memcpy(flat_quad, vertex_cur, sizeof(flat_quad));
-            }
+            batch_has_texture |= isTextured;
             Draw_EnqueueBuffer(nVertices, nIndices);
-            if (fill_flat_quad_gaps) {
-                Draw_FillFlatQuadScanlineGaps(flat_quad);
+            if (fill_quad_gaps) {
+                if (isTextured) {
+                    Draw_FillTexturedQuadScanlineGaps(compatibility_quad);
+                } else {
+                    Draw_FillFlatQuadScanlineGaps(compatibility_quad);
+                }
             }
         } else {
             // shouldn't happen on a normal PSX application
