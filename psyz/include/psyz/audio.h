@@ -57,6 +57,8 @@ unsigned long long Psyz_AudioRenderedFrames(void);
 unsigned long long Psyz_AudioRenderedEnergy(void);
 /** Number of MIDI note-on events dispatched by the host SEQ player. */
 unsigned long long Psyz_SeqNoteOnCount(void);
+/** Number of VAB tone voices started by SEQ notes (may exceed note count). */
+unsigned long long Psyz_SeqVoiceStartCount(void);
 /** Number of live voice-pitch changes issued through libsnd. */
 unsigned long long Psyz_SndPitchUpdateCount(void);
 void Psyz_AudioResetMetrics(void);

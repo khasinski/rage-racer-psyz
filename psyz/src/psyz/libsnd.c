@@ -14,7 +14,7 @@ typedef struct PsyzSeqChannel {
     u8 program;
     u8 volume;
     u8 pan;
-    short voices[128];
+    u8 pitch_bend;
 } PsyzSeqChannel;
 
 typedef struct PsyzSeqState {
@@ -29,15 +29,25 @@ typedef struct PsyzSeqState {
     u8 open;
     u8 playing;
     short loops;
+    signed char voice_channel[NUM_VOICES];
+    signed char voice_note[NUM_VOICES];
+    u8 voice_velocity[NUM_VOICES];
+    u32 voice_generation[NUM_VOICES];
     PsyzSeqChannel channels[PSYZ_SEQ_CHANNELS];
 } PsyzSeqState;
 
 static PsyzSeqState psyz_sequences[PSYZ_SEQ_SLOTS];
 static unsigned long long psyz_seq_note_on_count;
+static unsigned long long psyz_seq_voice_start_count;
 static unsigned long long psyz_snd_pitch_update_count;
+static u32 psyz_voice_generation[NUM_VOICES];
 
 unsigned long long Psyz_SeqNoteOnCount(void) {
     return psyz_seq_note_on_count;
+}
+
+unsigned long long Psyz_SeqVoiceStartCount(void) {
+    return psyz_seq_voice_start_count;
 }
 
 unsigned long long Psyz_SndPitchUpdateCount(void) {
@@ -59,19 +69,53 @@ static void reset_sequence_channels(PsyzSeqState* seq) {
         seq->channels[channel].program = channel;
         seq->channels[channel].volume = 127;
         seq->channels[channel].pan = 64;
-        for (int note = 0; note < 128; note++)
-            seq->channels[channel].voices[note] = -1;
+        seq->channels[channel].pitch_bend = 64;
+    }
+    for (int voice = 0; voice < NUM_VOICES; voice++) {
+        seq->voice_channel[voice] = -1;
+        seq->voice_note[voice] = -1;
+        seq->voice_velocity[voice] = 0;
+        seq->voice_generation[voice] = 0;
     }
 }
 
 static void sequence_key_off(PsyzSeqState* seq, int channel, int note) {
-    short voice = seq->channels[channel].voices[note];
-    if (voice >= 0) {
-        int locked = _snd_ev_flag;
-        _snd_ev_flag = 0;
-        SsUtKeyOffV(voice);
-        _snd_ev_flag = locked;
-        seq->channels[channel].voices[note] = -1;
+    for (short voice = 0; voice < NUM_VOICES; voice++) {
+        if (seq->voice_channel[voice] == channel &&
+            seq->voice_note[voice] == note) {
+            int locked = _snd_ev_flag;
+            _snd_ev_flag = 0;
+            if (seq->voice_generation[voice] == psyz_voice_generation[voice])
+                SsUtKeyOffV(voice);
+            _snd_ev_flag = locked;
+            seq->voice_channel[voice] = -1;
+            seq->voice_note[voice] = -1;
+            seq->voice_velocity[voice] = 0;
+        }
+    }
+}
+
+static void claim_sequence_voice(PsyzSeqState* owner, int voice, int channel,
+                                 int note, int velocity) {
+    /* Automatic allocation may steal a voice from another sequence/note. */
+    for (int slot = 0; slot < PSYZ_SEQ_SLOTS; slot++) {
+        psyz_sequences[slot].voice_channel[voice] = -1;
+        psyz_sequences[slot].voice_note[voice] = -1;
+        psyz_sequences[slot].voice_velocity[voice] = 0;
+    }
+    owner->voice_channel[voice] = channel;
+    owner->voice_note[voice] = note;
+    owner->voice_velocity[voice] = velocity;
+    owner->voice_generation[voice] = psyz_voice_generation[voice];
+}
+
+static void update_sequence_pitch_bend(PsyzSeqState* seq, int channel) {
+    PsyzSeqChannel* state = &seq->channels[channel];
+    for (short voice = 0; voice < NUM_VOICES; voice++) {
+        if (seq->voice_channel[voice] != channel)
+            continue;
+        SsUtPitchBend(voice, _svm_voice[voice].vabId,
+                     _svm_voice[voice].prog, 0x3c, state->pitch_bend);
     }
 }
 
@@ -107,12 +151,13 @@ static void sequence_key_on(
                            _svm_tn[index].vag);
                 if (note < _svm_tn[index].min || note > _svm_tn[index].max)
                     continue;
-                /* A VAB program may layer tones. Retain the last allocated
-                 * voice for note-off; Rage's banks use disjoint key ranges. */
                 short allocated = SsUtKeyOn(
                     seq->vab_id, state->program, tone, note, 0, left, right);
-                if (allocated >= 0)
+                if (allocated >= 0) {
                     voice = allocated;
+                    claim_sequence_voice(seq, allocated, channel, note, velocity);
+                    psyz_seq_voice_start_count++;
+                }
             }
         } else if (getenv("PSYZ_SEQ_TRACE")) {
             DEBUGF("SEQ VAB setup failed vab=%d program=%d used=%d max=%d",
@@ -123,8 +168,6 @@ static void sequence_key_on(
         _snd_ev_flag = locked;
     }
     if (voice >= 0)
-        state->voices[note] = voice;
-    if (voice >= 0)
         psyz_seq_note_on_count++;
     else if (getenv("PSYZ_SEQ_TRACE"))
         DEBUGF("SEQ note failed vab=%d channel=%d program=%d note=%d velocity=%d",
@@ -132,9 +175,15 @@ static void sequence_key_on(
 }
 
 static void stop_sequence_voices(PsyzSeqState* seq) {
-    for (int channel = 0; channel < PSYZ_SEQ_CHANNELS; channel++)
-        for (int note = 0; note < 128; note++)
-            sequence_key_off(seq, channel, note);
+    for (short voice = 0; voice < NUM_VOICES; voice++) {
+        if (seq->voice_channel[voice] >= 0) {
+            if (seq->voice_generation[voice] == psyz_voice_generation[voice])
+                SsUtKeyOffV(voice);
+            seq->voice_channel[voice] = -1;
+            seq->voice_note[voice] = -1;
+            seq->voice_velocity[voice] = 0;
+        }
+    }
 }
 
 static void restart_sequence(PsyzSeqState* seq) {
@@ -171,13 +220,16 @@ static int dispatch_sequence_event(PsyzSeqState* seq) {
         break;
     case 0xb0:
         data1 = *seq->cursor++;
-        if (data0 == 7)
+        if (data0 == 7) {
             seq->channels[status & 0xf].volume = data1;
-        else if (data0 == 10)
+        } else if (data0 == 10) {
             seq->channels[status & 0xf].pan = data1;
+        }
         else if (data0 == 121) {
             seq->channels[status & 0xf].volume = 127;
             seq->channels[status & 0xf].pan = 64;
+            seq->channels[status & 0xf].pitch_bend = 64;
+            update_sequence_pitch_bend(seq, status & 0xf);
         }
         break;
     case 0xc0:
@@ -186,7 +238,9 @@ static int dispatch_sequence_event(PsyzSeqState* seq) {
     case 0xd0:
         break;
     case 0xe0:
-        seq->cursor++;
+        data1 = *seq->cursor++;
+        seq->channels[status & 0xf].pitch_bend = data1;
+        update_sequence_pitch_bend(seq, status & 0xf);
         break;
     case 0xf0:
         if (status == 0xff) {
@@ -389,6 +443,7 @@ char _SsVmAlloc(short voice) {
                 _svm_voice[i].unk2++;
         _svm_voice[selected].unk2 = 0;
         _svm_voice[selected].unk18 = _svm_cur.tone_prior;
+        psyz_voice_generation[selected]++;
     }
     return selected;
 }
