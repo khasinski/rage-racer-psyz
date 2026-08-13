@@ -531,6 +531,33 @@ TEST_F(LibCdPlaybackTest, cdda_playback) {
     }
 }
 
+TEST_F(LibCdPlaybackTest, cdda_getlocp_advances_and_pause_stops_playback) {
+    constexpr int sectors = 4;
+    std::vector<unsigned short> sample(sectors * 2352 / 2, 0x6000u);
+    mount_bin_cue_pair(sample, "AUDIO");
+    CdReset(1);
+    u_char mode = CdlModeDA;
+    CdControl(CdlSetmode, &mode, nullptr);
+    CdlLOC loc = {};
+    CdIntToPos(0, &loc);
+    CdControl(CdlSetloc, reinterpret_cast<u_char*>(&loc), nullptr);
+    Psyz_AudioPause();
+    CdControl(CdlPlay, nullptr, nullptr);
+    std::vector<s16> out(588 * 2, 0);
+    ASSERT_EQ(Psyz_CdPullSamples(out.data(), 588), 588u);
+
+    u_char position[8] = {};
+    ASSERT_EQ(CdControl(CdlGetlocP, nullptr, position), 1);
+    EXPECT_EQ(position[0], itob(1));
+    EXPECT_EQ(position[2], 0);
+    EXPECT_EQ(position[3], 0);
+    EXPECT_EQ(position[4], 1);
+
+    ASSERT_EQ(CdControl(CdlPause, nullptr, nullptr), 1);
+    std::fill(out.begin(), out.end(), 0x1234);
+    EXPECT_EQ(Psyz_CdPullSamples(out.data(), 588), 0u);
+}
+
 TEST_F(LibCdPlaybackTest, xa_playback) {
     // Each MODE2/2352 XA Form2 sector decodes to 18*4*28 = 2016 stereo frames
     // at 37800 Hz, which yields 2016 * 44100/37800 = 2352 output frames at

@@ -390,6 +390,8 @@ static FILE* track_file;
 static s16 cd_buf[CD_BUF_FRAMES * N_CHANNELS];
 static size_t cd_buf_pos = 0;   // current read position (in frames)
 static size_t cd_buf_count = 0; // number of valid frames in buffer
+static int cdda_start_sector = 0;
+static uint64_t cdda_frames_played = 0;
 static int is_playing = 0; // pause or unpause seeking through the CD stream
 static int is_muted = 0;   // return empty samples while CD keeps streaming
 
@@ -429,6 +431,7 @@ static size_t cdda_pull_samples(short* buf, size_t max_frames) {
         }
         cd_buf_pos += n;
         written += n;
+        cdda_frames_played += n;
     }
 end:
     Psyz_AudioUnlock();
@@ -737,6 +740,8 @@ static int open_track_at_cd_pos(void) {
     DEBUGF("opened track %s at sector %d (offset %d)", track->file_path, sector,
            sector_offset);
     track_file = file;
+    cdda_start_sector = sector;
+    cdda_frames_played = 0;
     return 0;
 }
 
@@ -1015,7 +1020,41 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
         break;
     }
     case CdlGetlocP:
-        LOG_ONCE("com %s not implemented", CD_comstr[com]);
+        if (!result) {
+            ERRORF("%s got NULL result", CD_comstr[com]);
+            return -2;
+        }
+        {
+            /* CD-DA has 588 stereo sample frames per 75 Hz sector. GetlocP's
+             * relative fields are what Rage Racer snapshots before pause. */
+            int start_sector;
+            uint64_t frames_played;
+            int track_index = 0;
+            int relative;
+            CdlLOC absolute_loc;
+            Psyz_AudioLock();
+            start_sector = cdda_start_sector;
+            frames_played = cdda_frames_played;
+            Psyz_AudioUnlock();
+            int absolute = start_sector + (int)(frames_played / 588);
+            for (int i = 0; i < g_track_count; i++) {
+                if (g_tracks[i].is_valid && absolute >= g_tracks[i].abs_sector)
+                    track_index = i;
+            }
+            relative = absolute - g_tracks[track_index].abs_sector;
+            CdIntToPos(absolute, &absolute_loc);
+            result[0] = itob(g_tracks[track_index].track_num);
+            result[1] = itob(1);
+            /* Unlike CdIntToPos(), GetlocP's relative MSF has no 2-second
+             * lead-in: the first sector of a track is 00:00:00. */
+            result[2] = itob(relative / (75 * 60));
+            result[3] = itob((relative / 75) % 60);
+            result[4] = itob(relative % 75);
+            result[5] = absolute_loc.minute;
+            result[6] = absolute_loc.second;
+            result[7] = absolute_loc.sector;
+            cache_last_result(result, 8, CdlComplete);
+        }
         break;
     case CdlGetTN:
         if (!result) {
