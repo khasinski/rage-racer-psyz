@@ -984,8 +984,12 @@ int Draw_PushPrim(u_long* packets, int max_len) {
     u16 tpage = -1, clut = -1, pad2, pad3;
     Vertex* v;
 
-    // to ensure we always have space, we pretend we want to allocate a quad
-    Draw_EnsureBufferWillNotOverflow(4, 6);
+    /* writePacket stores a Gouraud packet's following vertex color through
+     * v + 1.  On the final vertex that is a parser scratch write beyond the
+     * four vertices eventually enqueued, so reserve one extra slot. */
+    /* An axis-aligned four-point polygon may need a right endpoint strip to
+     * reproduce the PS1's inclusive horizontal scan conversion. */
+    Draw_EnsureBufferWillNotOverflow(isGouraud ? 9 : 8, 12);
     v = vertex_cur;
     if (isShadeTex) {
         v->r = (unsigned char)(*packets >> 0);
@@ -1050,6 +1054,37 @@ int Draw_PushPrim(u_long* packets, int max_len) {
             }
 
             SET_TC_ALL(vertex_cur, tpage, clut);
+            if (isTextured && nVertices == 4 &&
+                vertex_cur[0].y == vertex_cur[1].y &&
+                vertex_cur[2].y == vertex_cur[3].y &&
+                vertex_cur[0].x == vertex_cur[2].x &&
+                vertex_cur[1].x == vertex_cur[3].x) {
+                Vertex* edge = &vertex_cur[4];
+                unsigned short edgeBase = n_vertices + 4;
+
+                /* Right endpoint: both sides carry the original right-edge
+                 * attributes, so widening coverage cannot alter UV/color. */
+                edge[0] = vertex_cur[1];
+                edge[1] = vertex_cur[1];
+                edge[2] = vertex_cur[3];
+                edge[3] = vertex_cur[3];
+                {
+                    int uStep = vertex_cur[1].u > vertex_cur[0].u ? -1 :
+                                vertex_cur[1].u < vertex_cur[0].u ? 1 : 0;
+                    edge[0].u = edge[1].u = (u16)(edge[0].u + uStep);
+                    edge[2].u = edge[3].u = (u16)(edge[2].u + uStep);
+                }
+                edge[1].x++;
+                edge[3].x++;
+                index_cur[6] = edgeBase + 0;
+                index_cur[7] = edgeBase + 1;
+                index_cur[8] = edgeBase + 2;
+                index_cur[9] = edgeBase + 1;
+                index_cur[10] = edgeBase + 3;
+                index_cur[11] = edgeBase + 2;
+                nVertices += 4;
+                nIndices += 6;
+            }
             Draw_EnqueueBuffer(nVertices, nIndices);
         } else {
             // shouldn't happen on a normal PSX application
