@@ -1026,6 +1026,17 @@ static bool TracePointInTriangle(const Vertex* a, const Vertex* b,
                          (ab <= 0 && bc <= 0 && ca <= 0));
 }
 
+static void TraceTriangleEdges(const Vertex* a, const Vertex* b,
+                               const Vertex* c, int x, int y,
+                               int offsetX, int offsetY) {
+    long ab = TraceEdge(a, b, x, y, offsetX, offsetY);
+    long bc = TraceEdge(b, c, x, y, offsetX, offsetY);
+    long ca = TraceEdge(c, a, x, y, offsetX, offsetY);
+    fprintf(stderr, " edge=%s%s%s values=%ld,%ld,%ld",
+            ab == 0 ? "ab" : "", bc == 0 ? "bc" : "",
+            ca == 0 ? "ca" : "", ab, bc, ca);
+}
+
 static void TraceTriangleTexel(const Vertex* a, const Vertex* b,
                                const Vertex* c, int x, int y,
                                int offsetX, int offsetY, const char* triangle) {
@@ -1158,9 +1169,13 @@ static void TraceGpuPrimitive(const Vertex* v, int count, int code,
                 areaLeft, areaTop, areaRight, areaBottom);
         if ((code & 0x04) != 0) {
             if (coveredTriangle == 0)
+                TraceTriangleEdges(&v[0], &v[1], &v[2], x, y,
+                                   offsetX, offsetY),
                 TraceTriangleTexel(&v[0], &v[1], &v[2], x, y,
                                    offsetX, offsetY, "012");
             else if (coveredTriangle == 1)
+                TraceTriangleEdges(&v[1], &v[3], &v[2], x, y,
+                                   offsetX, offsetY),
                 TraceTriangleTexel(&v[1], &v[3], &v[2], x, y,
                                    offsetX, offsetY, "132");
         }

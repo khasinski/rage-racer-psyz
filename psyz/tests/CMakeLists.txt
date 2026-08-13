@@ -63,6 +63,7 @@ if(RUBY_EXECUTABLE)
         COMMAND ${RUBY_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/verify_inclusive_ft4_edge.rb
             ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/sdl3_gpu.c
+            ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/sdl3_common.h
     )
 endif()
 

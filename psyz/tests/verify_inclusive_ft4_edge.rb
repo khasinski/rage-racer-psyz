@@ -2,6 +2,7 @@
 # frozen_string_literal: true
 
 source = File.read(ARGV.fetch(0))
+common = File.read(ARGV.fetch(1))
 block = source[/if \(isTextured && nVertices == 4 &&.*?nIndices \+= 6;\n            \}/m]
 abort "textured axis-aligned FT4 has no PS1 right-edge coverage strip" unless block
 abort "right-edge strip does not preserve endpoint U accumulator semantics" unless
@@ -15,3 +16,6 @@ strip = source.index("if (isTextured && nVertices == 4")
 abort "primitive trace sees synthetic edge vertices" unless trace && strip && trace < strip
 
 puts "textured FT4 right endpoint is inclusive without stretching original UVs"
+
+abort "pixel tracer does not expose exact triangle-edge membership" unless
+  common.include?("TraceTriangleEdges") && common.include?('edge=%s%s%s values=%ld,%ld,%ld')
