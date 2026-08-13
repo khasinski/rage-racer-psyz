@@ -319,6 +319,43 @@ static bool CreateGpuResources(void) {
         return false;
     }
 
+    /* Real PS1 VRAM is zero after GPU reset. SDL GPU texture contents are
+     * undefined at creation, and Rage legitimately samples untouched texels
+     * around packed 4-bit assets. Keep both the render and sampling copies in
+     * the same deterministic reset state before the first upload. */
+    u8* initial_vram = SDL_MapGPUTransferBuffer(device, tex_upload_transfer, true);
+    if (!initial_vram) {
+        ERRORF("SDL_MapGPUTransferBuffer: %s", SDL_GetError());
+        return false;
+    }
+    memset(initial_vram, 0, VRAM_BYTES);
+    SDL_UnmapGPUTransferBuffer(device, tex_upload_transfer);
+    SDL_GPUCommandBuffer* init_cmd = SDL_AcquireGPUCommandBuffer(device);
+    if (!init_cmd) {
+        ERRORF("SDL_AcquireGPUCommandBuffer: %s", SDL_GetError());
+        return false;
+    }
+    SDL_GPUCopyPass* init_copy = SDL_BeginGPUCopyPass(init_cmd);
+    const SDL_GPUTextureTransferInfo init_src = {
+        .transfer_buffer = tex_upload_transfer,
+        .pixels_per_row = VRAM_W,
+        .rows_per_layer = VRAM_H,
+    };
+    const SDL_GPUTextureRegion init_render = {
+        .texture = vram_render, .w = VRAM_W, .h = VRAM_H, .d = 1};
+    const SDL_GPUTextureRegion init_sample = {
+        .texture = vram_sample, .w = VRAM_W, .h = VRAM_H, .d = 1};
+    SDL_UploadToGPUTexture(init_copy, &init_src, &init_render, false);
+    SDL_UploadToGPUTexture(init_copy, &init_src, &init_sample, false);
+    SDL_EndGPUCopyPass(init_copy);
+    SDL_GPUFence* init_fence = SDL_SubmitGPUCommandBufferAndAcquireFence(init_cmd);
+    if (!init_fence) {
+        ERRORF("SDL_SubmitGPUCommandBufferAndAcquireFence: %s", SDL_GetError());
+        return false;
+    }
+    SDL_WaitForGPUFences(device, true, &init_fence, 1);
+    SDL_ReleaseGPUFence(device, init_fence);
+
     SDL_GPUShader* psx_vs =
         CreateShader(psx_vert_spv, psx_vert_spv_len, psx_vert_msl,
                      psx_vert_msl_len, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
