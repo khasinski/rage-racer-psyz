@@ -68,6 +68,18 @@ size_t Psyz_CdPullSamples(short* out, size_t num_frames);
  */
 void Psyz_CdSetReadCB(PsyzCdReadCB cb);
 
+/**
+ * @brief Notify the emulated drive that a host-side data read is starting
+ *
+ * A real PlayStation has one optical pickup, so a data read interrupts
+ * CD-DA playback. Ports which satisfy disc-data reads outside libcd must call
+ * this before reading the data.
+ */
+void Psyz_CdBeginDataRead(void);
+
+/** Return non-zero while CD-DA or XA audio is actively playing. */
+int Psyz_CdAudioPlaying(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -25,9 +25,8 @@ void SpuNGetVoiceAttr(int vNum, SpuVoiceAttr* arg) { NOT_IMPLEMENTED; }
 
 long SpuGetKeyStatus(u_long voice_bit) {
     for (int voice = 0; voice < 24; voice++) {
-        if ((voice_bit & ((u_long)1 << voice)) != 0 &&
-            Psyz_SpuRead(offsetof(SPU_RXX, voice[voice].volumex)) != 0)
-            return SPU_ON;
+        if ((voice_bit & ((u_long)1 << voice)) != 0)
+            return Psyz_SpuVoiceKeyStatus(voice);
     }
-    return SPU_OFF;
+    return -1;
 }

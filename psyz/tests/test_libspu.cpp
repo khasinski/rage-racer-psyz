@@ -7,6 +7,7 @@
 #include <vector>
 extern "C" {
 #include <psyz.h>
+#include <libspu.h>
 }
 
 class spu_Test : public testing::Test {
@@ -758,6 +759,29 @@ static void adsr_capture_with_keyoff(
         << (step) << " of 0x" << std::hex << (nominal)
 
 } // namespace
+
+TEST_F(spu_Test, voice_key_status_tracks_key_and_envelope) {
+    spu_reset_quiet();
+    Psyz_SpuWrite(0x1AA, 0x8000 | 0x4000);
+    adsr_upload_loop_sample();
+    Psyz_SpuWrite(0x14, 0x1000);
+    Psyz_SpuWrite(0x16, (unsigned short)(kAdsrSampleAddr >> 3));
+    Psyz_SpuWrite(0x1E, (unsigned short)(kAdsrSampleAddr >> 3));
+    Psyz_SpuWrite(0x18, 0x000f);
+    Psyz_SpuWrite(0x1A, 0x1fc0);
+
+    EXPECT_EQ(SPU_OFF, SpuGetKeyStatus(1u << 1));
+    EXPECT_EQ(-1, SpuGetKeyStatus(0));
+    Psyz_SpuWrite(0x188, 1u << 1);
+    EXPECT_EQ(SPU_ON_ENV_OFF, SpuGetKeyStatus(1u << 1));
+    for (int guard = 0; SpuGetKeyStatus(1u << 1) == SPU_ON_ENV_OFF; guard++) {
+        adsr_tick();
+        ASSERT_LT(guard, 1000);
+    }
+    EXPECT_EQ(SPU_ON, SpuGetKeyStatus(1u << 1));
+    Psyz_SpuWrite(0x18C, 1u << 1);
+    EXPECT_EQ(SPU_OFF_ENV_ON, SpuGetKeyStatus(1u << 1));
+}
 
 TEST_F(spu_Test, adsr_attack_linear_step) {
     uint16_t envx[0x40];

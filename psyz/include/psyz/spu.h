@@ -139,6 +139,9 @@ unsigned char* Psyz_SpuGetRam(void);
  */
 void Psyz_SpuPullSamples(short* out, int num_frames);
 
+/** Return the PsyQ key/envelope status (0..3) for one SPU voice. */
+int Psyz_SpuVoiceKeyStatus(int voice);
+
 #ifdef __cplusplus
 }
 #endif

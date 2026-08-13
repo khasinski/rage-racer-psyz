@@ -297,6 +297,18 @@ unsigned short Psyz_SpuRead(unsigned int reg_offset) {
     return _spu_RXX->raw[reg_offset >> 1];
 }
 
+int Psyz_SpuVoiceKeyStatus(int voice) {
+    VoiceState* vs;
+    if (voice < 0 || voice >= PSYZ_SPU_NUM_VOICES)
+        return -1;
+    vs = &spu.voice[voice];
+    if (!vs->active || vs->env_state == ADSR_OFF)
+        return 0; /* SPU_OFF */
+    if (vs->key_off)
+        return vs->env_vol != 0 ? 2 : 0; /* SPU_OFF_ENV_ON / SPU_OFF */
+    return vs->env_vol != 0 ? 1 : 3; /* SPU_ON / SPU_ON_ENV_OFF */
+}
+
 static void write_capture(unsigned int idx, short val) {
     unsigned int addr = (idx * 0x400) | spu.capture_pos;
     if (addr < PSYZ_SPU_RAM_SIZE) {

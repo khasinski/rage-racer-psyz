@@ -814,6 +814,21 @@ static void psyz_pause() {
     Psyz_AudioUnlock();
 }
 
+void Psyz_CdBeginDataRead(void) {
+    /* The PS1 drive cannot stream CD-DA and seek/read data simultaneously.
+     * Keep the playback position so a later CdlPlay may resume, matching a
+     * pause rather than inventing a new track selection. */
+    psyz_pause();
+}
+
+int Psyz_CdAudioPlaying(void) {
+    int playing;
+    Psyz_AudioLock();
+    playing = is_playing;
+    Psyz_AudioUnlock();
+    return playing;
+}
+
 static void psyz_mute() {
     Psyz_AudioLock();
     is_muted = 1;
