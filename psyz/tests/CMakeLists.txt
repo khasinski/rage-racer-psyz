@@ -65,6 +65,12 @@ if(RUBY_EXECUTABLE)
             ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/sdl3_gpu.c
             ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/sdl3_common.h
     )
+    add_test(
+        NAME flat_f4_scanline
+        COMMAND ${RUBY_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/verify_flat_f4_scanline.rb
+            ${CMAKE_CURRENT_SOURCE_DIR}/../src/platform/sdl3_gpu.c
+    )
 endif()
 
 add_executable(${PROJECT_NAME} ${PSYZ_TEST_SRC})

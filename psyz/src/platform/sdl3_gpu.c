@@ -1110,6 +1110,155 @@ int Draw_ExequeSync() { return 0; }
 
 // optimization to avoid sampling the VRAM on an untextured batch draw
 static bool batch_has_texture = false;
+
+typedef struct {
+    int x, y;
+} RasterPoint;
+
+static bool PsxFlatTriangleSpan(const RasterPoint input[3], int y,
+                                int* x_start, int* x_end) {
+    RasterPoint v[3] = {input[0], input[1], input[2]};
+    for (int i = 1; i < 3; i++) {
+        RasterPoint key = v[i];
+        int j = i;
+        while (j > 0 && v[j - 1].y > key.y) {
+            v[j] = v[j - 1];
+            j--;
+        }
+        v[j] = key;
+    }
+    if (v[2].y == v[0].y || y < v[0].y || y > v[2].y) {
+        return false;
+    }
+
+    double x1;
+    if (y < v[1].y) {
+        if (v[1].y == v[0].y) {
+            return false;
+        }
+        double t = (double)(y - v[0].y) / (double)(v[1].y - v[0].y);
+        x1 = v[0].x + (v[1].x - v[0].x) * t;
+    } else {
+        if (v[2].y == v[1].y) {
+            return false;
+        }
+        double t = (double)(y - v[1].y) / (double)(v[2].y - v[1].y);
+        x1 = v[1].x + (v[2].x - v[1].x) * t;
+    }
+    double t = (double)(y - v[0].y) / (double)(v[2].y - v[0].y);
+    double x2 = v[0].x + (v[2].x - v[0].x) * t;
+    if (x1 > x2) {
+        double swap = x1;
+        x1 = x2;
+        x2 = swap;
+    }
+    *x_start = (int)ceil(x1);
+    *x_end = (int)floor(x2);
+    return *x_start <= *x_end;
+}
+
+static long long RasterEdge(RasterPoint a, RasterPoint b, int x, int y) {
+    return (long long)(b.x - a.x) * (y - a.y) -
+           (long long)(b.y - a.y) * (x - a.x);
+}
+
+static bool ModernTriangleContains(const RasterPoint p[3], int x, int y) {
+    long long e0 = RasterEdge(p[0], p[1], x, y);
+    long long e1 = RasterEdge(p[1], p[2], x, y);
+    long long e2 = RasterEdge(p[2], p[0], x, y);
+    long long area = RasterEdge(p[0], p[1], p[2].x, p[2].y);
+    if (area == 0) return false;
+    for (int i = 0; i < 3; i++) {
+        long long edge = i == 0 ? e0 : i == 1 ? e1 : e2;
+        RasterPoint a = p[i];
+        RasterPoint b = p[(i + 1) % 3];
+        if (area > 0) {
+            if (edge < 0) return false;
+            if (edge == 0 && !((b.y < a.y) ||
+                               (b.y == a.y && b.x > a.x))) return false;
+        } else {
+            if (edge > 0) return false;
+            if (edge == 0 && !((b.y > a.y) ||
+                               (b.y == a.y && b.x < a.x))) return false;
+        }
+    }
+    return true;
+}
+
+/* Metal rasterizes a PS1 F4 as two conventional triangles.  The PS1 instead
+ * walks inclusive horizontal spans for each triangle; integer rounding can
+ * consequently cover pixels outside the mathematical triangle, most visibly
+ * on thin rotated quads such as Rage Racer's tachometer needle.  Append only
+ * those missing spans, so opaque and semi-transparent pixels already covered
+ * by Metal are never drawn twice. */
+static void Draw_FillFlatQuadScanlineGaps(const Vertex source[4]) {
+    RasterPoint p[4];
+    for (int i = 0; i < 4; i++) {
+        p[i].x = source[i].x + draw_offset.x;
+        p[i].y = source[i].y + draw_offset.y;
+    }
+    const RasterPoint tri0[3] = {p[0], p[1], p[2]};
+    const RasterPoint tri1[3] = {p[1], p[2], p[3]};
+    int y_min = p[0].y, y_max = p[0].y;
+    for (int i = 1; i < 4; i++) {
+        if (p[i].y < y_min) y_min = p[i].y;
+        if (p[i].y > y_max) y_max = p[i].y;
+    }
+    if (y_min < draw_area_start.y) y_min = draw_area_start.y;
+    if (y_min < 0) y_min = 0;
+    if (y_max > draw_area_end.y) y_max = draw_area_end.y;
+    if (y_max >= VRAM_H) y_max = VRAM_H - 1;
+    if (y_min > y_max) return;
+
+    for (int y = y_min; y <= y_max; y++) {
+        int lo0, hi0, lo1, hi1;
+        bool span0 = PsxFlatTriangleSpan(tri0, y, &lo0, &hi0);
+        bool span1 = PsxFlatTriangleSpan(tri1, y, &lo1, &hi1);
+        if (!span0 && !span1) continue;
+        int x_min = span0 ? lo0 : lo1;
+        int x_max = span0 ? hi0 : hi1;
+        if (span1) {
+            if (lo1 < x_min) x_min = lo1;
+            if (hi1 > x_max) x_max = hi1;
+        }
+        if (x_min < draw_area_start.x) x_min = draw_area_start.x;
+        if (x_min < 0) x_min = 0;
+        if (x_max > draw_area_end.x) x_max = draw_area_end.x;
+        if (x_max >= VRAM_W) x_max = VRAM_W - 1;
+        if (x_min > x_max) continue;
+
+        int run_start = -1;
+        for (int x = x_min; x <= x_max + 1; x++) {
+            bool expected = x <= x_max &&
+                ((span0 && x >= lo0 && x <= hi0) ||
+                 (span1 && x >= lo1 && x <= hi1));
+            bool covered = x <= x_max &&
+                (ModernTriangleContains(tri0, x, y) ||
+                 ModernTriangleContains(tri1, x, y));
+            bool missing = expected && !covered;
+            if (missing && run_start < 0) {
+                run_start = x;
+            } else if (!missing && run_start >= 0) {
+                Draw_EnsureBufferWillNotOverflow(4, 6);
+                Vertex* q = vertex_cur;
+                q[0] = q[1] = q[2] = q[3] = source[0];
+                q[0].x = q[2].x = (short)(run_start - draw_offset.x);
+                q[1].x = q[3].x = (short)(x - draw_offset.x);
+                q[0].y = q[1].y = (short)(y - draw_offset.y);
+                q[2].y = q[3].y = (short)(y + 1 - draw_offset.y);
+                index_cur[0] = n_vertices + 0;
+                index_cur[1] = n_vertices + 1;
+                index_cur[2] = n_vertices + 2;
+                index_cur[3] = n_vertices + 1;
+                index_cur[4] = n_vertices + 3;
+                index_cur[5] = n_vertices + 2;
+                Draw_EnqueueBuffer(4, 6);
+                run_start = -1;
+            }
+        }
+    }
+}
+
 int Draw_PushPrim(u_long* packets, int max_len) {
     int len = max_len;
     int code = (int)(*packets >> 24) & 0xFF;
@@ -1228,7 +1377,16 @@ int Draw_PushPrim(u_long* packets, int max_len) {
                 nVertices += 4;
                 nIndices += 6;
             }
+            Vertex flat_quad[4];
+            bool fill_flat_quad_gaps = !isTextured && !isGouraud &&
+                                       nVertices == 4;
+            if (fill_flat_quad_gaps) {
+                memcpy(flat_quad, vertex_cur, sizeof(flat_quad));
+            }
             Draw_EnqueueBuffer(nVertices, nIndices);
+            if (fill_flat_quad_gaps) {
+                Draw_FillFlatQuadScanlineGaps(flat_quad);
+            }
         } else {
             // shouldn't happen on a normal PSX application
             WARNF("code %02X not supported", code);
