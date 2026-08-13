@@ -779,6 +779,19 @@ unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h) {
     return pixels;
 }
 
+int Psyz_VideoGetCaptureState(PsyzVideoCaptureState* state) {
+    if (!state) return -1;
+    state->draw_x = draw_area_start.x;
+    state->draw_y = draw_area_start.y;
+    state->draw_w = draw_area_end.x - draw_area_start.x + 1;
+    state->draw_h = draw_area_end.y - draw_area_start.y + 1;
+    state->display_x = display_area.x;
+    state->display_y = display_area.y;
+    state->display_w = display_size.x;
+    state->display_h = display_size.y;
+    return 0;
+}
+
 unsigned Psyz_VideoGetInternalResolution(void) { return internal_res; }
 
 int Psyz_VideoSetInternalResolution(unsigned multiplier) {

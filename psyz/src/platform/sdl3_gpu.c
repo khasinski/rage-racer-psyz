@@ -924,6 +924,19 @@ unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h) {
     return output;
 }
 
+int Psyz_VideoGetCaptureState(PsyzVideoCaptureState* state) {
+    if (!state) return -1;
+    state->draw_x = draw_area_start.x;
+    state->draw_y = draw_area_start.y;
+    state->draw_w = draw_area_end.x - draw_area_start.x + 1;
+    state->draw_h = draw_area_end.y - draw_area_start.y + 1;
+    state->display_x = display_area.x;
+    state->display_y = display_area.y;
+    state->display_w = display_size.x;
+    state->display_h = display_size.y;
+    return 0;
+}
+
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
     const int y_offset = (240 - h) / 2;
     if (!pixels || w <= 0 || h <= 0 || w > VRAM_W || h > 240 ||

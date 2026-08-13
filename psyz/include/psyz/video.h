@@ -218,6 +218,14 @@ unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h);
  * Diagnostic only; caller owns the returned buffer. */
 unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h);
 
+typedef struct PsyzVideoCaptureState {
+    int draw_x, draw_y, draw_w, draw_h;
+    int display_x, display_y, display_w, display_h;
+} PsyzVideoCaptureState;
+
+/* Snapshot the page-selection state used by diagnostic captures. */
+int Psyz_VideoGetCaptureState(PsyzVideoCaptureState* state);
+
 /* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
 int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
 
