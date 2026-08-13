@@ -1252,13 +1252,66 @@ static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
 static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
                                  u16* u, u16* v) {
     double width = span->x_right - span->x_left;
-    double t = width > 0.0 ? (x - span->x_left) / width : 0.0;
-    double sample_u = span->u_left + (span->u_right - span->u_left) * t;
-    double sample_v = span->v_left + (span->v_right - span->v_left) * t;
-    int fixed_u = (int)(sample_u * 65536.0);
-    int fixed_v = (int)(sample_v * 65536.0);
+    double start_t = width > 0.0 ?
+        (span->x_start - span->x_left) / width : 0.0;
+    double start_u = span->u_left +
+        (span->u_right - span->u_left) * start_t;
+    double start_v = span->v_left +
+        (span->v_right - span->v_left) * start_t;
+    int fixed_u = (int)(start_u * 65536.0);
+    int fixed_v = (int)(start_v * 65536.0);
+    int step_u = width > 0.0 ?
+        (int)((span->u_right - span->u_left) / width * 65536.0) : 0;
+    int step_v = width > 0.0 ?
+        (int)((span->v_right - span->v_left) / width * 65536.0) : 0;
+    fixed_u += (x - span->x_start) * step_u;
+    fixed_v += (x - span->x_start) * step_v;
     *u = (u16)((fixed_u >> 16) & 0xff);
     *v = (u16)((fixed_v >> 16) & 0xff);
+}
+
+static void ModernTextureSample(const Vertex p[3], int x, int y,
+                                u16* u, u16* v) {
+    double ax = p[0].x + draw_offset.x;
+    double ay = p[0].y + draw_offset.y;
+    double bx = p[1].x + draw_offset.x;
+    double by = p[1].y + draw_offset.y;
+    double cx = p[2].x + draw_offset.x;
+    double cy = p[2].y + draw_offset.y;
+    double determinant = (bx - ax) * (cy - ay) -
+                         (by - ay) * (cx - ax);
+    if (determinant == 0.0) {
+        *u = p[0].u;
+        *v = p[0].v;
+        return;
+    }
+    double du_dx = ((p[1].u - p[0].u) * (cy - ay) -
+                    (p[2].u - p[0].u) * (by - ay)) / determinant;
+    double du_dy = ((bx - ax) * (p[2].u - p[0].u) -
+                    (cx - ax) * (p[1].u - p[0].u)) / determinant;
+    double dv_dx = ((p[1].v - p[0].v) * (cy - ay) -
+                    (p[2].v - p[0].v) * (by - ay)) / determinant;
+    double dv_dy = ((bx - ax) * (p[2].v - p[0].v) -
+                    (cx - ax) * (p[1].v - p[0].v)) / determinant;
+    int sample_u = (int)floor(p[0].u + du_dx * (x - ax) +
+                              du_dy * (y - ay) + 1e-7);
+    int sample_v = (int)floor(p[0].v + dv_dx * (x - ax) +
+                              dv_dy * (y - ay) + 1e-7);
+    *u = (u16)CLAMP(sample_u, 0, 255);
+    *v = (u16)CLAMP(sample_v, 0, 255);
+}
+
+static bool TextureSamplesDiffer(const Vertex source[4], u16 expected_u,
+                                 u16 expected_v, u16 modern_u, u16 modern_v) {
+    u8 and_u = source[0].twin & 0xff;
+    u8 and_v = (source[0].twin >> 8) & 0xff;
+    u8 or_u = (source[0].twin >> 16) & 0xff;
+    u8 or_v = (source[0].twin >> 24) & 0xff;
+    expected_u = (expected_u & and_u) | or_u;
+    expected_v = (expected_v & and_v) | or_v;
+    modern_u = (modern_u & and_u) | or_u;
+    modern_v = (modern_v & and_v) | or_v;
+    return expected_u != modern_u || expected_v != modern_v;
 }
 
 static void Draw_EnqueueCompatibilityPixel(const Vertex source[4], int x,
@@ -1363,31 +1416,39 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
         bool has0 = PsxTextureTriangleSpan(vertices0, y, &span0);
         bool has1 = PsxTextureTriangleSpan(vertices1, y, &span1);
         if (!has0 && !has1) continue;
-        int candidates[4] = {span0.x_start, span0.x_end,
-                             span1.x_start, span1.x_end};
-        int candidate_count = (has0 ? 2 : 0) + (has1 ? 2 : 0);
-        if (!has0 && has1) {
-            candidates[0] = span1.x_start;
-            candidates[1] = span1.x_end;
+        int x_min = has0 ? span0.x_start : span1.x_start;
+        int x_max = has0 ? span0.x_end : span1.x_end;
+        if (has1) {
+            if (span1.x_start < x_min) x_min = span1.x_start;
+            if (span1.x_end > x_max) x_max = span1.x_end;
         }
-        for (int i = 0; i < candidate_count; i++) {
-            int x = candidates[i];
-            bool duplicate = false;
-            for (int j = 0; j < i; j++) duplicate |= candidates[j] == x;
-            if (duplicate || x < draw_area_start.x || x > draw_area_end.x ||
-                x < 0 || x >= VRAM_W) continue;
+        if (x_min < draw_area_start.x) x_min = draw_area_start.x;
+        if (x_min < 0) x_min = 0;
+        if (x_max > draw_area_end.x) x_max = draw_area_end.x;
+        if (x_max >= VRAM_W) x_max = VRAM_W - 1;
+        for (int x = x_min; x <= x_max; x++) {
             bool expected0 = has0 && x >= span0.x_start && x <= span0.x_end;
             bool expected1 = has1 && x >= span1.x_start && x <= span1.x_end;
-            bool covered = ModernTriangleContains(points0, x, y) ||
-                           ModernTriangleContains(points1, x, y);
-            if ((!expected0 && !expected1) || covered) continue;
+            bool covered0 = ModernTriangleContains(points0, x, y);
+            bool covered1 = ModernTriangleContains(points1, x, y);
+            if (!expected0 && !expected1) continue;
 
             /* The PS1 submits triangle 0 followed by triangle 1. If their
              * inclusive spans overlap, triangle 1 owns the final texel. */
             const RasterTextureSpan* sample = expected1 ? &span1 : &span0;
-            u16 u, v;
-            PsxTextureSpanSample(sample, x, &u, &v);
-            Draw_EnqueueCompatibilityPixel(source, x, y, true, u, v);
+            u16 expected_u, expected_v;
+            PsxTextureSpanSample(sample, x, &expected_u, &expected_v);
+            bool correct = !covered0 && !covered1;
+            if (!correct) {
+                const Vertex* modern = covered1 ? vertices1 : vertices0;
+                u16 modern_u, modern_v;
+                ModernTextureSample(modern, x, y, &modern_u, &modern_v);
+                correct = TextureSamplesDiffer(source, expected_u, expected_v,
+                                               modern_u, modern_v);
+            }
+            if (correct)
+                Draw_EnqueueCompatibilityPixel(source, x, y, true,
+                                               expected_u, expected_v);
         }
     }
 }
