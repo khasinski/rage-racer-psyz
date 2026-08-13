@@ -16,11 +16,14 @@ abort "textured correction does not reproduce truncated 16.16 UV steps" unless
 abort "textured correction ignores unstable integral float UV boundaries" unless
   source.include?("fabs(raw_u - round(raw_u))") &&
   source.include?("bool unstable = ModernTextureSample")
+abort "textured Gouraud coverage does not carry PS1 scanline RGB" unless
+  source.include?("expected_r") && source.include?("step_r") &&
+  source.include?("Draw_FillTexturedQuadScanlineGaps(compatibility_quad,")
 abort "obsolete axis-aligned geometry strip is still active" if
   source.include?("uStep") || source.include?("Right endpoint:")
 
 trace = source.index("TraceGpuPrimitive(vertex_cur, nVertices")
-correction = source.index("Draw_FillTexturedQuadScanlineGaps(compatibility_quad)")
+correction = source.index("Draw_FillTexturedQuadScanlineGaps(compatibility_quad,")
 abort "primitive trace sees synthetic compatibility pixels" unless
   trace && correction && trace < correction
 

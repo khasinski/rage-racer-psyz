@@ -7,7 +7,7 @@ source = File.read(ARGV.fetch(0))
   abort "missing flat F4 raster compatibility helper #{name}" unless source.include?(name)
 end
 abort "F4 correction is not restricted to opaque flat quads" unless
-  source.include?("!isGouraud && nVertices == 4") &&
+  source.include?("nVertices == 4 && !(code & SEMITRANSP)") &&
   source.include?("!(code & SEMITRANSP)")
 abort "flat F4 correction can redraw already-covered Metal pixels" unless
   source.include?("if (expected && !covered)")

@@ -1120,6 +1120,9 @@ typedef struct {
     double x_left, x_right;
     double u_left, u_right;
     double v_left, v_right;
+    double r_left, r_right;
+    double g_left, g_right;
+    double b_left, b_right;
 } RasterTextureSpan;
 
 static bool PsxFlatTriangleSpan(const RasterPoint input[3], int y,
@@ -1222,17 +1225,26 @@ static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
         span->x_left = v[0].x + draw_offset.x + (v[1].x - v[0].x) * t1;
         span->u_left = v[0].u + (v[1].u - v[0].u) * t1;
         span->v_left = v[0].v + (v[1].v - v[0].v) * t1;
+        span->r_left = (int)(v[0].r + (v[1].r - v[0].r) * t1);
+        span->g_left = (int)(v[0].g + (v[1].g - v[0].g) * t1);
+        span->b_left = (int)(v[0].b + (v[1].b - v[0].b) * t1);
     } else {
         if (y2 == y1) return false;
         t1 = (double)(y - y1) / (double)(y2 - y1);
         span->x_left = v[1].x + draw_offset.x + (v[2].x - v[1].x) * t1;
         span->u_left = v[1].u + (v[2].u - v[1].u) * t1;
         span->v_left = v[1].v + (v[2].v - v[1].v) * t1;
+        span->r_left = (int)(v[1].r + (v[2].r - v[1].r) * t1);
+        span->g_left = (int)(v[1].g + (v[2].g - v[1].g) * t1);
+        span->b_left = (int)(v[1].b + (v[2].b - v[1].b) * t1);
     }
     double t2 = (double)(y - y0) / (double)(y2 - y0);
     span->x_right = v[0].x + draw_offset.x + (v[2].x - v[0].x) * t2;
     span->u_right = v[0].u + (v[2].u - v[0].u) * t2;
     span->v_right = v[0].v + (v[2].v - v[0].v) * t2;
+    span->r_right = (int)(v[0].r + (v[2].r - v[0].r) * t2);
+    span->g_right = (int)(v[0].g + (v[2].g - v[0].g) * t2);
+    span->b_right = (int)(v[0].b + (v[2].b - v[0].b) * t2);
     if (span->x_left > span->x_right) {
         double swap = span->x_left;
         span->x_left = span->x_right;
@@ -1243,6 +1255,15 @@ static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
         swap = span->v_left;
         span->v_left = span->v_right;
         span->v_right = swap;
+        swap = span->r_left;
+        span->r_left = span->r_right;
+        span->r_right = swap;
+        swap = span->g_left;
+        span->g_left = span->g_right;
+        span->g_right = swap;
+        swap = span->b_left;
+        span->b_left = span->b_right;
+        span->b_right = swap;
     }
     span->x_start = (int)ceil(span->x_left);
     span->x_end = (int)floor(span->x_right);
@@ -1250,7 +1271,7 @@ static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
 }
 
 static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
-                                 u16* u, u16* v) {
+                                 u16* u, u16* v, u8* r, u8* g, u8* b) {
     double width = span->x_right - span->x_left;
     double start_t = width > 0.0 ?
         (span->x_start - span->x_left) / width : 0.0;
@@ -1264,10 +1285,28 @@ static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
         (int)((span->u_right - span->u_left) / width * 65536.0) : 0;
     int step_v = width > 0.0 ?
         (int)((span->v_right - span->v_left) / width * 65536.0) : 0;
+    int fixed_r = (int)((span->r_left +
+        (span->r_right - span->r_left) * start_t) * 65536.0);
+    int fixed_g = (int)((span->g_left +
+        (span->g_right - span->g_left) * start_t) * 65536.0);
+    int fixed_b = (int)((span->b_left +
+        (span->b_right - span->b_left) * start_t) * 65536.0);
+    int step_r = width > 0.0 ?
+        (int)((span->r_right - span->r_left) / width * 65536.0) : 0;
+    int step_g = width > 0.0 ?
+        (int)((span->g_right - span->g_left) / width * 65536.0) : 0;
+    int step_b = width > 0.0 ?
+        (int)((span->b_right - span->b_left) / width * 65536.0) : 0;
     fixed_u += (x - span->x_start) * step_u;
     fixed_v += (x - span->x_start) * step_v;
+    fixed_r += (x - span->x_start) * step_r;
+    fixed_g += (x - span->x_start) * step_g;
+    fixed_b += (x - span->x_start) * step_b;
     *u = (u16)((fixed_u >> 16) & 0xff);
     *v = (u16)((fixed_v >> 16) & 0xff);
+    *r = (u8)CLAMP(fixed_r >> 16, 0, 255);
+    *g = (u8)CLAMP(fixed_g >> 16, 0, 255);
+    *b = (u8)CLAMP(fixed_b >> 16, 0, 255);
 }
 
 static bool ModernTextureSample(const Vertex p[3], int x, int y,
@@ -1321,7 +1360,7 @@ static bool TextureSamplesDiffer(const Vertex source[4], u16 expected_u,
 
 static void Draw_EnqueueCompatibilityPixel(const Vertex source[4], int x,
                                            int y, bool textured, u16 u,
-                                           u16 v) {
+                                           u16 v, u8 r, u8 g, u8 b) {
     Draw_EnsureBufferWillNotOverflow(4, 6);
     Vertex* q = vertex_cur;
     q[0] = q[1] = q[2] = q[3] = source[0];
@@ -1333,6 +1372,9 @@ static void Draw_EnqueueCompatibilityPixel(const Vertex source[4], int x,
         q[0].u = q[1].u = q[2].u = q[3].u = u;
         q[0].v = q[1].v = q[2].v = q[3].v = v;
     }
+    q[0].r = q[1].r = q[2].r = q[3].r = r;
+    q[0].g = q[1].g = q[2].g = q[3].g = g;
+    q[0].b = q[1].b = q[2].b = q[3].b = b;
     index_cur[0] = n_vertices + 0;
     index_cur[1] = n_vertices + 1;
     index_cur[2] = n_vertices + 2;
@@ -1390,12 +1432,15 @@ static void Draw_FillFlatQuadScanlineGaps(const Vertex source[4]) {
             bool covered = ModernTriangleContains(tri0, x, y) ||
                            ModernTriangleContains(tri1, x, y);
             if (expected && !covered)
-                Draw_EnqueueCompatibilityPixel(source, x, y, false, 0, 0);
+                Draw_EnqueueCompatibilityPixel(source, x, y, false, 0, 0,
+                                               source[0].r, source[0].g,
+                                               source[0].b);
         }
     }
 }
 
-static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
+static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
+                                              bool gouraud) {
     RasterPoint p[4];
     for (int i = 0; i < 4; i++) {
         p[i].x = source[i].x + draw_offset.x;
@@ -1431,7 +1476,22 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
         if (x_min < 0) x_min = 0;
         if (x_max > draw_area_end.x) x_max = draw_area_end.x;
         if (x_max >= VRAM_W) x_max = VRAM_W - 1;
-        for (int x = x_min; x <= x_max; x++) {
+        int candidates[4] = {span0.x_start, span0.x_end,
+                             span1.x_start, span1.x_end};
+        int candidate_count = (has0 ? 2 : 0) + (has1 ? 2 : 0);
+        if (!has0 && has1) {
+            candidates[0] = span1.x_start;
+            candidates[1] = span1.x_end;
+        }
+        int iterations = gouraud ? candidate_count : x_max - x_min + 1;
+        for (int i = 0; i < iterations; i++) {
+            int x = gouraud ? candidates[i] : x_min + i;
+            if (x < x_min || x > x_max) continue;
+            if (gouraud) {
+                bool duplicate = false;
+                for (int j = 0; j < i; j++) duplicate |= candidates[j] == x;
+                if (duplicate) continue;
+            }
             bool expected0 = has0 && x >= span0.x_start && x <= span0.x_end;
             bool expected1 = has1 && x >= span1.x_start && x <= span1.x_end;
             bool covered0 = ModernTriangleContains(points0, x, y);
@@ -1442,9 +1502,11 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
              * inclusive spans overlap, triangle 1 owns the final texel. */
             const RasterTextureSpan* sample = expected1 ? &span1 : &span0;
             u16 expected_u, expected_v;
-            PsxTextureSpanSample(sample, x, &expected_u, &expected_v);
+            u8 expected_r, expected_g, expected_b;
+            PsxTextureSpanSample(sample, x, &expected_u, &expected_v,
+                                 &expected_r, &expected_g, &expected_b);
             bool correct = !covered0 && !covered1;
-            if (!correct) {
+            if (!correct && !gouraud) {
                 const Vertex* modern = covered1 ? vertices1 : vertices0;
                 u16 modern_u, modern_v;
                 bool unstable = ModernTextureSample(modern, x, y,
@@ -1455,7 +1517,9 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4]) {
             }
             if (correct)
                 Draw_EnqueueCompatibilityPixel(source, x, y, true,
-                                               expected_u, expected_v);
+                                               expected_u, expected_v,
+                                               expected_r, expected_g,
+                                               expected_b);
         }
     }
 }
@@ -1546,8 +1610,7 @@ int Draw_PushPrim(u_long* packets, int max_len) {
                               draw_area_start.x, draw_area_start.y,
                               draw_area_end.x, draw_area_end.y);
             Vertex compatibility_quad[4];
-            bool fill_quad_gaps = !isGouraud && nVertices == 4 &&
-                                  !(code & SEMITRANSP);
+            bool fill_quad_gaps = nVertices == 4 && !(code & SEMITRANSP);
             if (fill_quad_gaps) {
                 memcpy(compatibility_quad, vertex_cur,
                        sizeof(compatibility_quad));
@@ -1556,7 +1619,8 @@ int Draw_PushPrim(u_long* packets, int max_len) {
             Draw_EnqueueBuffer(nVertices, nIndices);
             if (fill_quad_gaps) {
                 if (isTextured) {
-                    Draw_FillTexturedQuadScanlineGaps(compatibility_quad);
+                    Draw_FillTexturedQuadScanlineGaps(compatibility_quad,
+                                                      isGouraud);
                 } else {
                     Draw_FillFlatQuadScanlineGaps(compatibility_quad);
                 }
