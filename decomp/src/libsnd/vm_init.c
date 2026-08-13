@@ -19,6 +19,13 @@ INCLUDE_ASM("asm/nonmatchings/libsnd/vm_init", _SsVmInit);
 #else
 void _SsVmInit(char numVoices) {
     unsigned short i;
+    unsigned short previousVabCount = _svm_vab_count;
+    u8 previousVabUsed[NUM_VAB];
+
+    /* Rage Racer uses _SsVmInit(0) between transfer and playback to reset the
+     * voice allocator. Retail retains the VAB registry in this path. */
+    if (numVoices == 0)
+        memcpy(previousVabUsed, _svm_vab_used, sizeof(previousVabUsed));
 
     _spu_setInTransfer(0);
     _svm_damper = 0;
@@ -34,6 +41,10 @@ void _SsVmInit(char numVoices) {
     for (i = 0; i < NUM_VAB; i++) {
         _svm_vab_used[i] = 0;
     }
+    if (numVoices == 0) {
+        memcpy(_svm_vab_used, previousVabUsed, sizeof(previousVabUsed));
+        _svm_vab_count = previousVabCount;
+    }
 
     if (numVoices >= NUM_VOICES) {
         _SsVmMaxVoice = NUM_VOICES;
@@ -41,7 +52,7 @@ void _SsVmInit(char numVoices) {
         _SsVmMaxVoice = numVoices;
     }
 
-    for (i = 0; i < _SsVmMaxVoice; i++) {
+    for (i = 0; i < (numVoices == 0 ? NUM_VOICES : _SsVmMaxVoice); i++) {
         _svm_voice[i].unk2 = 0x18;
         _svm_voice[i].unk0 = 0xFF;
         _svm_voice[i].unke = -1;

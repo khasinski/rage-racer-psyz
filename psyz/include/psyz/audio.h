@@ -55,6 +55,8 @@ void Psyz_AudioUnlock(void);
 /** Debug/test counters for PCM actually produced by the SPU mixer. */
 unsigned long long Psyz_AudioRenderedFrames(void);
 unsigned long long Psyz_AudioRenderedEnergy(void);
+/** Number of MIDI note-on events dispatched by the host SEQ player. */
+unsigned long long Psyz_SeqNoteOnCount(void);
 void Psyz_AudioResetMetrics(void);
 
 #ifdef __cplusplus
