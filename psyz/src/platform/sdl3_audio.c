@@ -2,15 +2,47 @@
 #include <psyz/log.h>
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#ifdef _MSC_VER
+#include <windows.h>
+#else
 #include <stdatomic.h>
+#endif
 
 #define N_CHANNELS 2
 #define SAMPLE_SIZE sizeof(short)
 
 static SDL_AudioStream* sdl_stream;
 static SDL_Mutex* mutex;
+#ifdef _MSC_VER
+static volatile LONG64 rendered_frames;
+static volatile LONG64 rendered_energy;
+
+static unsigned long long AudioCounterAdd(volatile LONG64* counter,
+                                          unsigned long long value) {
+    return (unsigned long long)InterlockedAdd64(counter, (LONG64)value);
+}
+static unsigned long long AudioCounterLoad(volatile LONG64* counter) {
+    return (unsigned long long)InterlockedCompareExchange64(counter, 0, 0);
+}
+static void AudioCounterStore(volatile LONG64* counter, unsigned long long value) {
+    InterlockedExchange64(counter, (LONG64)value);
+}
+#else
 static _Atomic unsigned long long rendered_frames;
 static _Atomic unsigned long long rendered_energy;
+
+static unsigned long long AudioCounterAdd(_Atomic unsigned long long* counter,
+                                          unsigned long long value) {
+    return atomic_fetch_add(counter, value) + value;
+}
+static unsigned long long AudioCounterLoad(_Atomic unsigned long long* counter) {
+    return atomic_load(counter);
+}
+static void AudioCounterStore(_Atomic unsigned long long* counter,
+                              unsigned long long value) {
+    atomic_store(counter, value);
+}
+#endif
 
 // Audio callback: SDL pulls audio from the SPU via this callback.
 // The audio driver synchronizes the SPU based on the pulled samples.
@@ -34,8 +66,8 @@ static void SDLCALL audio_callback(void* userdata, SDL_AudioStream* stream,
             int sample = buf[i];
             energy += (unsigned long long)(sample < 0 ? -sample : sample);
         }
-        atomic_fetch_add(&rendered_frames, (unsigned long long)batch);
-        atomic_fetch_add(&rendered_energy, energy);
+        AudioCounterAdd(&rendered_frames, (unsigned long long)batch);
+        AudioCounterAdd(&rendered_energy, energy);
         SDL_PutAudioStreamData(stream, buf, batch * N_CHANNELS * SAMPLE_SIZE);
         num_frames -= batch;
     }
@@ -97,16 +129,16 @@ void Psyz_AudioLock() { SDL_LockMutex(mutex); }
 void Psyz_AudioUnlock() { SDL_UnlockMutex(mutex); }
 
 unsigned long long Psyz_AudioRenderedFrames(void) {
-    return atomic_load(&rendered_frames);
+    return AudioCounterLoad(&rendered_frames);
 }
 
 unsigned long long Psyz_AudioRenderedEnergy(void) {
-    return atomic_load(&rendered_energy);
+    return AudioCounterLoad(&rendered_energy);
 }
 
 void Psyz_AudioResetMetrics(void) {
-    atomic_store(&rendered_frames, 0);
-    atomic_store(&rendered_energy, 0);
+    AudioCounterStore(&rendered_frames, 0);
+    AudioCounterStore(&rendered_energy, 0);
 }
 
 void Psyz_AudioPause(void) { SDL_PauseAudioStreamDevice(sdl_stream); }
