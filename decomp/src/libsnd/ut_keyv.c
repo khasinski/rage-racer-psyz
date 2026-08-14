@@ -89,9 +89,10 @@ short SsUtKeyOnV(short voice, short vabId, short prog, short tone, short note,
 #ifdef __psyz
     if (getenv("PSYZ_SND_KEY_TRACE"))
         fprintf(stderr,
-                "SsUtKeyOnV key-on voice=%d vab=%d prog=%d actual=%d tone=%d vag=%d\n",
+                "SsUtKeyOnV key-on voice=%d vab=%d prog=%d actual=%d tone=%d "
+                "vag=%d vol=%d,%d\n",
                 voice, vabId, prog, _svm_cur.field_7_fake_program, tone,
-                _svm_cur.tone_vag_idx);
+                _svm_cur.tone_vag_idx, voll, volr);
 #endif
     _snd_ev_flag = 0;
     return voice;
