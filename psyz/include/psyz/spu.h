@@ -142,6 +142,9 @@ void Psyz_SpuPullSamples(short* out, int num_frames);
 /** Return the PsyQ key/envelope status (0..3) for one SPU voice. */
 int Psyz_SpuVoiceKeyStatus(int voice);
 
+/** Append host SPU key-on register snapshots to a CSV file; NULL disables. */
+int Psyz_SpuSetKeyOnTracePath(const char* path);
+
 #ifdef __cplusplus
 }
 #endif

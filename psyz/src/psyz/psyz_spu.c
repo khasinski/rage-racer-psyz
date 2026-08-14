@@ -1,6 +1,7 @@
 #include <psyz.h>
 #include <psyz/log.h>
 #include <assert.h>
+#include <stdio.h>
 #include <string.h>
 #include "../../decomp/src/libspu/libspu_private.h"
 #include "spu_gauss.h"
@@ -127,6 +128,23 @@ static struct {
     u8 initialized;
 } spu;
 
+static FILE* spu_key_on_trace;
+
+int Psyz_SpuSetKeyOnTracePath(const char* path) {
+    if (spu_key_on_trace) {
+        fclose(spu_key_on_trace);
+        spu_key_on_trace = NULL;
+    }
+    if (!path || !*path)
+        return 0;
+    spu_key_on_trace = fopen(path, "w");
+    if (!spu_key_on_trace)
+        return -1;
+    fputs("voice,address,pitch,left,right,adsr1,adsr2\n", spu_key_on_trace);
+    fflush(spu_key_on_trace);
+    return 0;
+}
+
 u8* Psyz_SpuGetRam(void) { return spu.ram; }
 
 void Psyz_SpuInit(void) {
@@ -239,6 +257,15 @@ static void spu_key_on_voice(int v) {
     vs->key_off = 0;
     vs->delay_ticks = ENV_KEYON_DELAY_TICKS;
     rxx->voice[v].volumex = 0;
+    if (spu_key_on_trace) {
+        fprintf(spu_key_on_trace, "%d,%u,%u,%d,%d,%u,%u\n", v,
+                (unsigned)rxx->voice[v].addr, (unsigned)rxx->voice[v].pitch,
+                (short)rxx->voice[v].volume.left,
+                (short)rxx->voice[v].volume.right,
+                (unsigned)rxx->voice[v].adsr[0],
+                (unsigned)rxx->voice[v].adsr[1]);
+        fflush(spu_key_on_trace);
+    }
 }
 
 void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value) {
