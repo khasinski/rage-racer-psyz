@@ -3,7 +3,7 @@
 #include <SDL3/SDL.h>
 #include <stdio.h>
 #ifdef _MSC_VER
-#include <windows.h>
+#include <intrin.h>
 #else
 #include <stdatomic.h>
 #endif
@@ -14,18 +14,18 @@
 static SDL_AudioStream* sdl_stream;
 static SDL_Mutex* mutex;
 #ifdef _MSC_VER
-static volatile LONG64 rendered_frames;
-static volatile LONG64 rendered_energy;
+static volatile __int64 rendered_frames;
+static volatile __int64 rendered_energy;
 
-static unsigned long long AudioCounterAdd(volatile LONG64* counter,
+static unsigned long long AudioCounterAdd(volatile __int64* counter,
                                           unsigned long long value) {
-    return (unsigned long long)InterlockedAdd64(counter, (LONG64)value);
+    return (unsigned long long)_InterlockedAdd64(counter, (__int64)value);
 }
-static unsigned long long AudioCounterLoad(volatile LONG64* counter) {
-    return (unsigned long long)InterlockedCompareExchange64(counter, 0, 0);
+static unsigned long long AudioCounterLoad(volatile __int64* counter) {
+    return (unsigned long long)_InterlockedCompareExchange64(counter, 0, 0);
 }
-static void AudioCounterStore(volatile LONG64* counter, unsigned long long value) {
-    InterlockedExchange64(counter, (LONG64)value);
+static void AudioCounterStore(volatile __int64* counter, unsigned long long value) {
+    _InterlockedExchange64(counter, (__int64)value);
 }
 #else
 static _Atomic unsigned long long rendered_frames;
