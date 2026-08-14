@@ -645,6 +645,13 @@ static void PlatformBackend_Present(void) {
 
     ApplyPendingInternalRes();
 
+    if (present_source_cb) {
+        // Flush accumulated game work (draws, VRAM moves such as texture
+        // animation) before the host renderer samples the VRAM texture, so
+        // it never observes a half-applied transfer.
+        SubmitCmd();
+    }
+
     SDL_GPUCommandBuffer* cmd = AcquireCmd();
     if (!cmd) {
         return;
