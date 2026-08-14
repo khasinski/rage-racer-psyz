@@ -1206,6 +1206,16 @@ void NormalColorCol(SVECTOR* v0, CVECTOR* v1, CVECTOR* v2) {
     Psyz_GteStRgb(v2);
 }
 
+void NormalColorCol3(SVECTOR* v0, SVECTOR* v1, SVECTOR* v2, CVECTOR* base,
+                     CVECTOR* out0, CVECTOR* out1, CVECTOR* out2) {
+    Psyz_GteLdv3(v0, v1, v2);
+    Psyz_GteLdRgb(base);
+    NCCT(0x4B08043F);
+    memcpy(out0, &RGB0, sizeof(RGB0));
+    memcpy(out1, &RGB1, sizeof(RGB1));
+    memcpy(out2, &RGB2, sizeof(RGB2));
+}
+
 void NormalColorDpq(SVECTOR* v0, CVECTOR* v1, long p, CVECTOR* v2) {
     Psyz_GteLdv0(v0);
     Psyz_GteLdRgb(v1);
