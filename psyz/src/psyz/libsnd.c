@@ -421,26 +421,38 @@ int _SsInitSoundSep(short flag, short i, short vab_id, unsigned long* addr) {
 
 char _SsVmAlloc(short voice) {
     int selected = _SsVmMaxVoice;
-    int oldest = -1;
-    int oldest_age = -1;
+    int candidate = -1;
+    unsigned short best_pitch = 0xffff;
+    unsigned short best_age = 0;
+    unsigned short threshold = (unsigned char)_svm_cur.tone_prior;
     (void)voice;
+
     for (int i = 0; i < _SsVmMaxVoice; i++) {
-        if (!_svm_voice[i].unk1b) {
+        if (!_svm_voice[i].unk1b && !_svm_voice[i].unk6) {
             selected = i;
             break;
         }
-        if (_svm_voice[i].unk2 > oldest_age &&
-            _svm_voice[i].unk18 <= _svm_cur.tone_prior) {
-            oldest = i;
-            oldest_age = _svm_voice[i].unk2;
+
+        if ((unsigned short)_svm_voice[i].unk18 < threshold) {
+            threshold = (unsigned short)_svm_voice[i].unk18;
+            candidate = i;
+            best_pitch = _svm_voice[i].unk6;
+            best_age = (unsigned short)_svm_voice[i].unk2;
+        } else if ((unsigned short)_svm_voice[i].unk18 == threshold &&
+                   (_svm_voice[i].unk6 < best_pitch ||
+                    (_svm_voice[i].unk6 == best_pitch &&
+                     (unsigned short)_svm_voice[i].unk2 > best_age))) {
+            candidate = i;
+            best_pitch = _svm_voice[i].unk6;
+            best_age = (unsigned short)_svm_voice[i].unk2;
         }
     }
-    if (selected == _SsVmMaxVoice && oldest >= 0)
-        selected = oldest;
+
+    if (selected == _SsVmMaxVoice && candidate >= 0)
+        selected = candidate;
     if (selected < _SsVmMaxVoice) {
         for (int i = 0; i < _SsVmMaxVoice; i++)
-            if (_svm_voice[i].unk2 < 0x7fff)
-                _svm_voice[i].unk2++;
+            _svm_voice[i].unk2++;
         _svm_voice[selected].unk2 = 0;
         _svm_voice[selected].unk18 = _svm_cur.tone_prior;
         psyz_voice_generation[selected]++;
