@@ -77,6 +77,10 @@ PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
     return prev;
 }
 
+SDL_GPUTexture* Psyz_VideoGetVramTexture_SDL3GPU(void) {
+    return vram_render;
+}
+
 static SDL_GPUCommandBuffer* AcquireCmd(void) {
     if (!pending_cmd) {
         pending_cmd = SDL_AcquireGPUCommandBuffer(device);

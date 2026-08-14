@@ -27,6 +27,12 @@ typedef void (*PsyzPresentSourceCB_SDL3GPU)(PsyzPresentSourceInfo* info);
 PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
     PsyzPresentSourceCB_SDL3GPU cb);
 
+// The native-resolution 1024x512 PS1 VRAM texture (RGBA8), for host
+// renderers that sample game textures/CLUTs directly. NULL before platform
+// initialization. Content reflects work submitted up to the previous
+// present; sample it only from work submitted before the current one.
+SDL_GPUTexture* Psyz_VideoGetVramTexture_SDL3GPU(void);
+
 #ifdef __cplusplus
 }
 #endif
