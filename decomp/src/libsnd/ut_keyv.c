@@ -1,10 +1,19 @@
 #include "libsnd_private.h"
+#ifdef __psyz
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 short SsUtKeyOnV(short voice, short vabId, short prog, short tone, short note,
                  short fine, short voll, short volr) {
     int tn;
 
     if (_snd_ev_flag == 1) {
+#ifdef __psyz
+        if (getenv("PSYZ_SND_KEY_TRACE"))
+            fprintf(stderr, "SsUtKeyOnV busy voice=%d vab=%d prog=%d tone=%d\n",
+                    voice, vabId, prog, tone);
+#endif
         return -1;
     }
     _snd_ev_flag = 1;
@@ -13,6 +22,14 @@ short SsUtKeyOnV(short voice, short vabId, short prog, short tone, short note,
         return -1;
     }
     if (_SsVmVSetUp(vabId, prog)) {
+#ifdef __psyz
+        if (getenv("PSYZ_SND_KEY_TRACE"))
+            fprintf(stderr,
+                    "SsUtKeyOnV setup-failed voice=%d vab=%d used=%d prog=%d max=%d\n",
+                    voice, vabId,
+                    vabId >= 0 && vabId < NUM_VAB ? _svm_vab_used[vabId] : -1,
+                    prog, kMaxPrograms);
+#endif
         _snd_ev_flag = 0;
         return -1;
     }
@@ -44,6 +61,12 @@ short SsUtKeyOnV(short voice, short vabId, short prog, short tone, short note,
     _svm_cur.tone_min = _svm_tn[tn].min;
     _svm_cur.tone_max = _svm_tn[tn].max;
     if (_svm_cur.tone_vag_idx == 0) {
+#ifdef __psyz
+        if (getenv("PSYZ_SND_KEY_TRACE"))
+            fprintf(stderr,
+                    "SsUtKeyOnV empty-tone voice=%d vab=%d prog=%d actual=%d tone=%d\n",
+                    voice, vabId, prog, _svm_cur.field_7_fake_program, tone);
+#endif
         _snd_ev_flag = 0;
         return -1;
     }
@@ -63,6 +86,13 @@ short SsUtKeyOnV(short voice, short vabId, short prog, short tone, short note,
     } else {
         _SsVmKeyOnNow(1, note2pitch2(note, fine));
     }
+#ifdef __psyz
+    if (getenv("PSYZ_SND_KEY_TRACE"))
+        fprintf(stderr,
+                "SsUtKeyOnV key-on voice=%d vab=%d prog=%d actual=%d tone=%d vag=%d\n",
+                voice, vabId, prog, _svm_cur.field_7_fake_program, tone,
+                _svm_cur.tone_vag_idx);
+#endif
     _snd_ev_flag = 0;
     return voice;
 }

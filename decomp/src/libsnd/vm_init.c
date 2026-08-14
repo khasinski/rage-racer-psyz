@@ -1,4 +1,8 @@
 #include "libsnd_private.h"
+#ifdef __psyz
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 extern SPU_RXX* _svm_sreg;
 extern SPU_VOICE_REG _svm_sreg_buf[NUM_VOICES];
@@ -21,6 +25,11 @@ void _SsVmInit(char numVoices) {
     unsigned short i;
     unsigned short previousVabCount = _svm_vab_count;
     u8 previousVabUsed[NUM_VAB];
+
+    if (getenv("PSYZ_SND_KEY_TRACE"))
+        fprintf(stderr, "_SsVmInit voices=%d oldmax=%d kon=%04x,%04x koff=%04x,%04x\n",
+                numVoices, _SsVmMaxVoice, _svm_okon1, _svm_okon2,
+                _svm_okof1, _svm_okof2);
 
     /* Rage Racer uses _SsVmInit(0) between transfer and playback to reset the
      * voice allocator. Retail retains the VAB registry in this path. */
@@ -52,7 +61,10 @@ void _SsVmInit(char numVoices) {
         _SsVmMaxVoice = numVoices;
     }
 
-    for (i = 0; i < (numVoices == 0 ? NUM_VOICES : _SsVmMaxVoice); i++) {
+    /* A zero count is a state reset with no per-voice pass.  Rage relies on
+     * this before selecting a new reserved-voice count: keying off all 24
+     * voices here leaves pending KOFF bits which cancel its race-engine KON. */
+    for (i = 0; i < _SsVmMaxVoice; i++) {
         _svm_voice[i].unk2 = 0x18;
         _svm_voice[i].unk0 = 0xFF;
         _svm_voice[i].unke = -1;

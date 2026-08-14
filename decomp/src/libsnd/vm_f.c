@@ -1,4 +1,8 @@
 #include "libsnd_private.h"
+#ifdef __psyz
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 SPU_RXX* _svm_sreg = (SPU_RXX*)0x1F801C00;
 SPU_VOICE_REG _svm_sreg_buf[NUM_VOICES];
@@ -28,6 +32,12 @@ void _SsVmFlush(void) {
     u16 temp_a1;
     u16 temp_a2;
     u16 temp_v1;
+
+    if (getenv("PSYZ_SND_KEY_TRACE") &&
+        (_svm_okon1 || _svm_okon2 || _svm_okof1 || _svm_okof2))
+        fprintf(stderr, "_SsVmFlush max=%d kon=%04x,%04x koff=%04x,%04x\n",
+                _SsVmMaxVoice, _svm_okon1, _svm_okon2,
+                _svm_okof1, _svm_okof2);
 
     _svm_envx_ptr = (_svm_envx_ptr + 1) & 0xF;
     _svm_envx_hist[_svm_envx_ptr] = 0;
