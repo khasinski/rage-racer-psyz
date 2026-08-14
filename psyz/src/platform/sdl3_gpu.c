@@ -1,6 +1,7 @@
 #include <psyz.h>
 #include <psyz/overlay.h>
 #include <psyz/overlay_sdl3_gpu.h>
+#include <psyz/present_sdl3_gpu.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -65,6 +66,14 @@ PsyzOverlayRenderCB_SDL3GPU Psyz_OverlayRender_SDL3GPU(
     PsyzOverlayRenderCB_SDL3GPU cb) {
     const PsyzOverlayRenderCB_SDL3GPU prev = overlay_render_cb;
     overlay_render_cb = cb;
+    return prev;
+}
+
+static PsyzPresentSourceCB_SDL3GPU present_source_cb;
+PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
+    PsyzPresentSourceCB_SDL3GPU cb) {
+    const PsyzPresentSourceCB_SDL3GPU prev = present_source_cb;
+    present_source_cb = cb;
     return prev;
 }
 
@@ -654,12 +663,28 @@ static void PlatformBackend_Present(void) {
             };
             float game_aspect =
                 GetCurrentGameAspectRatio(display_size.x, display_size.y);
+            SDL_GPUFilter present_filter = SDL_GPU_FILTER_NEAREST;
             if (debug_show_vram) {
                 src.x = 0;
                 src.y = 0;
                 src.w = VRAM_W * n;
                 src.h = VRAM_H * n;
                 game_aspect = (float)VRAM_W / (float)VRAM_H;
+            } else if (present_source_cb) {
+                PsyzPresentSourceInfo info = {0};
+                info.filter = SDL_GPU_FILTER_NEAREST;
+                present_source_cb(&info);
+                if (info.texture && info.w > 0 && info.h > 0) {
+                    src.texture = info.texture;
+                    src.x = 0;
+                    src.y = 0;
+                    src.w = info.w;
+                    src.h = info.h;
+                    game_aspect = info.aspect > 0.0f
+                                      ? info.aspect
+                                      : (float)info.w / (float)info.h;
+                    present_filter = info.filter;
+                }
             }
 
             WndSize win = {(int)sc_w, (int)sc_h};
@@ -679,7 +704,7 @@ static void PlatformBackend_Present(void) {
                 // vertical bars around the game output are black
                 .load_op = SDL_GPU_LOADOP_CLEAR,
                 .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
-                .filter = SDL_GPU_FILTER_NEAREST,
+                .filter = present_filter,
             };
             if (disp_on) {
                 SDL_BlitGPUTexture(cmd, &blit);
