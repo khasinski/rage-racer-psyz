@@ -19,7 +19,12 @@ static volatile __int64 rendered_energy;
 
 static unsigned long long AudioCounterAdd(volatile __int64* counter,
                                           unsigned long long value) {
+#ifdef __clang__
+    return (unsigned long long)(_InterlockedExchangeAdd64(counter, (__int64)value) +
+                                (__int64)value);
+#else
     return (unsigned long long)_InterlockedAdd64(counter, (__int64)value);
+#endif
 }
 static unsigned long long AudioCounterLoad(volatile __int64* counter) {
     return (unsigned long long)_InterlockedCompareExchange64(counter, 0, 0);
