@@ -652,8 +652,15 @@ static void PlatformBackend_Present(void) {
     if (swapchain_ok) {
         SDL_GPUTexture* swapchain = NULL;
         Uint32 sc_w = 0, sc_h = 0;
-        if (!SDL_WaitAndAcquireGPUSwapchainTexture(
-                cmd, sdl3_window, &swapchain, &sc_w, &sc_h)) {
+        if (present_nonblocking_request) {
+            // Skip the frame when no swapchain image is free instead of
+            // stalling the caller (the game's frame-sync wait).
+            if (!SDL_AcquireGPUSwapchainTexture(
+                    cmd, sdl3_window, &swapchain, &sc_w, &sc_h)) {
+                swapchain = NULL;
+            }
+        } else if (!SDL_WaitAndAcquireGPUSwapchainTexture(
+                       cmd, sdl3_window, &swapchain, &sc_w, &sc_h)) {
             WARNF("SDL_WaitAndAcquireGPUSwapchainTexture: %s", SDL_GetError());
         }
         if (swapchain) {
