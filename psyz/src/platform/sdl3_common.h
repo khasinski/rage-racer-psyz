@@ -46,12 +46,8 @@ static bool debug_show_vram = false;
 static bool is_fullscreen = false;
 
 // defaults to better support integer scaling
-#ifndef DEFAULT_FRONT_W
 #define DEFAULT_FRONT_W 1280
-#endif
-#ifndef DEFAULT_FRONT_H
 #define DEFAULT_FRONT_H 960
-#endif
 
 typedef struct {
     int w, h;
@@ -114,18 +110,19 @@ static bool is_pal = false;
 static PsyzAspectMode aspect_mode = PSYZ_ASPECT_DISPLAY;
 static WndSize wnd_size_in_pixels = {0, 0};
 
-static void SetWindowLogicalSize(int width, int height) {
+static void SetWindowSizeInPixels(int width, int height) {
     if (!sdl3_window) {
         return;
     }
-    SDL_SetWindowSize(sdl3_window, width, height);
-    SDL_GetWindowSizeInPixels(
-        sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
-    if (getenv("RAGE_PORT_WINDOW_DEBUG") != NULL) {
-        INFOF("window logical=%dx%d pixels=%dx%d density=%.2f",
-              width, height, wnd_size_in_pixels.w, wnd_size_in_pixels.h,
-              SDL_GetWindowPixelDensity(sdl3_window));
+    wnd_size_in_pixels.w = width;
+    wnd_size_in_pixels.h = height;
+    float density = SDL_GetWindowPixelDensity(sdl3_window);
+    if (density <= 0.0f) {
+        density = 1.0f;
     }
+    int actual_width = (int)(width / density + 0.5f);
+    int actual_height = (int)(height / density + 0.5f);
+    SDL_SetWindowSize(sdl3_window, actual_width, actual_height);
 }
 
 static float GetCurrentGameAspectRatio(int disp_w, int disp_h) {
@@ -136,12 +133,6 @@ static float GetCurrentGameAspectRatio(int disp_w, int disp_h) {
     }
     if (disp_h <= 0) {
         return 4.0f / 3.0f;
-    }
-    /* A 480-line PS1 framebuffer is interlaced: two fields make one
-     * 240-line picture.  Treating those stored field lines as square output
-     * pixels turns the intended 4:3 320x480 mode into a 2:3 image. */
-    if (disp_h > 288) {
-        disp_h /= 2;
     }
     return (float)disp_w / (float)disp_h;
 }
@@ -179,8 +170,7 @@ int Psyz_VideoSetAspectMode(PsyzAspectMode mode) {
 }
 
 static Uint32 elapsed_from_beginning = 0;
-static Uint64 last_vsync_counter = 0;
-static unsigned limitless_vsync_units = 0;
+static Uint32 last_vsync = 0;
 
 // frame pacing state
 static double target_frame_rate = VSYNC_NTSC;
@@ -296,9 +286,9 @@ static void UpdateTargetFramerate(double fps) {
 // Initialize the timing/vsync state. Call once at the end of InitPlatform.
 static void Sdl3Common_TimingInit(void) {
     elapsed_from_beginning = (Uint32)SDL_GetTicks();
+    last_vsync = elapsed_from_beginning;
     perf_frequency = SDL_GetPerformanceFrequency();
     last_frame_time = SDL_GetPerformanceCounter();
-    last_vsync_counter = last_frame_time;
     UpdateTargetFramerate(VSYNC_NTSC);
 }
 
@@ -355,37 +345,19 @@ static void WaitForNextFrame(void) {
 }
 
 int Psyz_VideoVSync(int mode) {
+    Uint32 cur;
     unsigned short ret;
-    if (mode < 0) {
-        ret = (unsigned short)gpu_stats.total_frames;
-    } else if (mode > 0) {
-        if (vsync_mode == PSYZ_VSYNC_LIMITLESS) {
-            /* The PS1 root counter observed by VSync(1) changes only on a
-             * VBlank boundary.  Advance one complete 1/256-VBlank unit per
-             * deterministic poll; returning half-VBlank values lets a 0x180
-             * race threshold finish after 1.5 fields instead of the retail
-             * two. */
-            if (limitless_vsync_units < 0x200) {
-                limitless_vsync_units += 0x100;
-            }
-            ret = (unsigned short)limitless_vsync_units;
-        } else {
-            Uint64 now = SDL_GetPerformanceCounter();
-            double elapsed_us =
-                GetElapsedMicroseconds(last_vsync_counter, now);
-            unsigned whole_vblanks =
-                (unsigned)(elapsed_us / target_frame_time_us);
-            ret = (unsigned short)(whole_vblanks * 0x100u);
-        }
+    cur = (Uint32)SDL_GetTicks();
+    if (mode >= 0) {
+        ret = (unsigned short)(cur - last_vsync);
     } else {
-        ret = 0;
+        ret = (unsigned short)gpu_stats.total_frames;
     }
+    last_vsync = cur;
     if (mode == 0) {
         PlatformBackend_Present();
         PollEvents();
         WaitForNextFrame();
-        last_vsync_counter = SDL_GetPerformanceCounter();
-        limitless_vsync_units = 0;
     }
     return ret;
 }
@@ -510,50 +482,14 @@ static u_long keyb_p1[] = {
     SDL_SCANCODE_DOWN,      // PAD_DOWN
     SDL_SCANCODE_LEFT,      // PAD_LEFT
 };
-/* SDL may deliver KEY_DOWN and KEY_UP in one event pump when a game frame is
- * slow (notably during FMV decoding). Preserve every down transition for one
- * pad sample so a short key tap cannot disappear between PS1 VSync polls. */
-static unsigned int keyboard_held_mask;
-static unsigned int keyboard_pressed_latch;
-
-static unsigned int KeyboardMaskForScancode(SDL_Scancode scancode) {
-    unsigned int mask = 0;
-    for (int i = 0; i < LEN(keyb_p1); i++) {
-        if ((SDL_Scancode)keyb_p1[i] == scancode) {
-            mask |= 1U << i;
-        }
-    }
-    return mask;
-}
-
-int Psyz_SetKeyboardKey(int button_index, const char* key_name) {
-    SDL_Scancode scancode;
-    if (button_index < 0 || button_index >= LEN(keyb_p1) || !key_name) {
-        return 0;
-    }
-    scancode = SDL_GetScancodeFromName(key_name);
-    if (scancode == SDL_SCANCODE_UNKNOWN) {
-        return 0;
-    }
-    keyb_p1[button_index] = (u_long)scancode;
-    if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
-        INFOF("keyboard binding index=%d name=%s scancode=%d", button_index,
-              key_name, (int)scancode);
-    }
-    return 1;
-}
 static unsigned int PadRead_Keyboard(u_long* config, int config_len) {
     const bool* keyb = SDL_GetKeyboardState(NULL);
-    unsigned int r = keyboard_held_mask | keyboard_pressed_latch;
+    unsigned int r = 0;
     for (int i = 0; i < config_len; i++) {
         if (keyb[config[i]]) {
             r |= 1UL << i;
         }
     }
-    if (r != 0 && getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
-        INFOF("keyboard pad mask=%04X", r);
-    }
-    keyboard_pressed_latch = 0;
     return r;
 }
 static unsigned int PadRead_Gamepad(struct Gamepad* g) {
@@ -767,23 +703,6 @@ static void SetFullScreen(bool isFullscreen) {
 
 static void PollEvents(void) {
     SDL_Event event;
-    static bool test_key_tap_sent;
-
-    if (!test_key_tap_sent) {
-        const char *test_key = getenv("RAGE_PORT_TEST_KEY_TAP");
-        if (test_key && test_key[0]) {
-            SDL_Scancode scancode = SDL_GetScancodeFromName(test_key);
-            if (scancode != SDL_SCANCODE_UNKNOWN) {
-                SDL_Event synthetic = {0};
-                synthetic.type = SDL_EVENT_KEY_DOWN;
-                synthetic.key.scancode = scancode;
-                SDL_PushEvent(&synthetic);
-                synthetic.type = SDL_EVENT_KEY_UP;
-                SDL_PushEvent(&synthetic);
-            }
-            test_key_tap_sent = true;
-        }
-    }
     while (SDL_PollEvent(&event)) {
         if (overlay_event_cb) {
             overlay_event_cb(&event);
@@ -803,27 +722,9 @@ static void PollEvents(void) {
                 sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
             break;
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
-            SDL_GetWindowSizeInPixels(
-                sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
+            SetWindowSizeInPixels(wnd_size_in_pixels.w, wnd_size_in_pixels.h);
             break;
         case SDL_EVENT_KEY_DOWN:
-            {
-                unsigned int mask =
-                    KeyboardMaskForScancode(event.key.scancode);
-                if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
-                    INFOF("key mapped mask=%04X", mask);
-                }
-                keyboard_held_mask |= mask;
-                if (!event.key.repeat) {
-                    keyboard_pressed_latch |= mask;
-                }
-            }
-            if (getenv("RAGE_PORT_INPUT_DEBUG") != NULL) {
-                INFOF("key down scancode=%d name=%s repeat=%d",
-                      (int)event.key.scancode,
-                      SDL_GetScancodeName(event.key.scancode),
-                      event.key.repeat ? 1 : 0);
-            }
             if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
                 quit_requested = true;
             }
@@ -833,10 +734,6 @@ static void PollEvents(void) {
             if (event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat) {
                 SetFullScreen(!is_fullscreen);
             }
-            break;
-        case SDL_EVENT_KEY_UP:
-            keyboard_held_mask &=
-                ~KeyboardMaskForScancode(event.key.scancode);
             break;
         default:
             break;
@@ -909,163 +806,6 @@ static void Draw_EnqueueBuffer(int vertices, int indices) {
 // real hardware use XY coords as signed 11-bit
 static short s11(short v) { return (short)(((v & 0x7FF) ^ 1024) - 1024); }
 
-static unsigned long long gpu_trace_order;
-static unsigned long long gpu_trace_frame = ~0ULL;
-static unsigned long long gpu_trace_requested_frame;
-static int gpu_trace_x;
-static int gpu_trace_y;
-static u16 gpu_trace_tpage;
-static u16 gpu_trace_clut;
-static bool gpu_trace_initialized;
-static bool gpu_trace_enabled;
-static bool gpu_trace_has_point;
-static bool gpu_trace_has_frame;
-static bool gpu_trace_has_tpage;
-static bool gpu_trace_has_clut;
-
-static void InitGpuPrimitiveTrace(void) {
-    const char* point;
-    const char* frameText;
-    const char* tpageText;
-    const char* clutText;
-    if (gpu_trace_initialized) return;
-    gpu_trace_initialized = true;
-    point = getenv("RAGE_GPU_TRACE_PIXEL");
-    frameText = getenv("RAGE_GPU_TRACE_FRAME");
-    tpageText = getenv("RAGE_GPU_TRACE_TPAGE");
-    clutText = getenv("RAGE_GPU_TRACE_CLUT");
-    gpu_trace_has_point = point != NULL &&
-                          sscanf(point, "%d,%d", &gpu_trace_x,
-                                 &gpu_trace_y) == 2;
-    gpu_trace_has_frame = frameText != NULL;
-    gpu_trace_has_tpage = tpageText != NULL;
-    gpu_trace_has_clut = clutText != NULL;
-    gpu_trace_enabled = gpu_trace_has_point || gpu_trace_has_tpage ||
-                        gpu_trace_has_clut;
-    if (gpu_trace_has_frame) {
-        gpu_trace_requested_frame = strtoull(frameText, NULL, 0);
-    }
-    if (gpu_trace_has_tpage) gpu_trace_tpage = strtoul(tpageText, NULL, 16);
-    if (gpu_trace_has_clut) gpu_trace_clut = strtoul(clutText, NULL, 16);
-}
-
-static long TraceEdge(const Vertex* a, const Vertex* b, int x, int y,
-                      int offsetX, int offsetY) {
-    return (long)(b->x - a->x) * (y - (a->y + offsetY)) -
-           (long)(b->y - a->y) * (x - (a->x + offsetX));
-}
-
-static bool TracePointInTriangle(const Vertex* a, const Vertex* b,
-                                 const Vertex* c, int x, int y,
-                                 int offsetX, int offsetY) {
-    long area = TraceEdge(a, b, c->x + offsetX, c->y + offsetY,
-                          offsetX, offsetY);
-    long ab = TraceEdge(a, b, x, y, offsetX, offsetY);
-    long bc = TraceEdge(b, c, x, y, offsetX, offsetY);
-    long ca = TraceEdge(c, a, x, y, offsetX, offsetY);
-    return area != 0 && ((ab >= 0 && bc >= 0 && ca >= 0) ||
-                         (ab <= 0 && bc <= 0 && ca <= 0));
-}
-
-static void TraceTriangleTexel(const Vertex* a, const Vertex* b,
-                               const Vertex* c, int x, int y,
-                               int offsetX, int offsetY, const char* triangle) {
-    double ax = a->x, ay = a->y;
-    double bx = b->x, by = b->y;
-    double cx = c->x, cy = c->y;
-    double px = (double)(x - offsetX);
-    double py = (double)(y - offsetY);
-    double determinant = (bx - ax) * (cy - ay) -
-                         (by - ay) * (cx - ax);
-    double dudx, dudy, dvdx, dvdy, rawU, rawV, resolvedU, resolvedV;
-    if (determinant == 0.0) return;
-    dudx = ((double)(b->u - a->u) * (cy - ay) -
-            (double)(c->u - a->u) * (by - ay)) / determinant;
-    dudy = ((bx - ax) * (double)(c->u - a->u) -
-            (cx - ax) * (double)(b->u - a->u)) / determinant;
-    dvdx = ((double)(b->v - a->v) * (cy - ay) -
-            (double)(c->v - a->v) * (by - ay)) / determinant;
-    dvdy = ((bx - ax) * (double)(c->v - a->v) -
-            (cx - ax) * (double)(b->v - a->v)) / determinant;
-    rawU = a->u + dudx * (px - ax) + dudy * (py - ay);
-    rawV = a->v + dvdx * (px - ax) + dvdy * (py - ay);
-    resolvedU = nearbyint(rawU);
-    resolvedV = nearbyint(rawV);
-    {
-        const unsigned char* twin = (const unsigned char*)&a->twin;
-        unsigned windowU = ((unsigned)resolvedU & twin[0]) | twin[2];
-        unsigned windowV = ((unsigned)resolvedV & twin[1]) | twin[3];
-        fprintf(stderr,
-                " tri=%s rawuv=%.4f,%.4f duv=%.4f,%.4f "
-                "texel=%.0f,%.0f window=%u,%u",
-                triangle, rawU, rawV, dudx, dvdy, resolvedU, resolvedV,
-                windowU, windowV);
-    }
-}
-
-static void TraceGpuPrimitive(const Vertex* v, int count, int code,
-                              u16 tpage, u16 clut,
-                              int offsetX, int offsetY) {
-    unsigned long long frame = gpu_stats.total_frames;
-    unsigned long long order;
-    int x = gpu_trace_x;
-    int y = gpu_trace_y;
-    int i;
-    bool covered;
-    int coveredTriangle = -1;
-
-    InitGpuPrimitiveTrace();
-    if (!gpu_trace_enabled) return;
-    x = gpu_trace_x;
-    y = gpu_trace_y;
-    if (frame != gpu_trace_frame) {
-        gpu_trace_frame = frame;
-        gpu_trace_order = 0;
-    }
-    order = gpu_trace_order++;
-    if (gpu_trace_has_frame && frame != gpu_trace_requested_frame) return;
-    if (gpu_trace_has_tpage && (tpage & 0x9FF) != gpu_trace_tpage) return;
-    if (gpu_trace_has_clut && clut != gpu_trace_clut) return;
-    covered = !gpu_trace_has_point;
-    if (gpu_trace_has_point) {
-        covered = TracePointInTriangle(&v[0], &v[1], &v[2], x, y,
-                                       offsetX, offsetY);
-        if (covered) coveredTriangle = 0;
-        if (!covered && count == 4) {
-            covered = TracePointInTriangle(&v[1], &v[3], &v[2], x, y,
-                                           offsetX, offsetY);
-            if (covered) coveredTriangle = 1;
-        }
-    }
-    if (!covered) return;
-
-    if (gpu_trace_has_point) {
-        fprintf(stderr,
-                "gpu-cover frame=%llu order=%llu pixel=%d,%d code=%02x "
-                "tpage=%04x clut=%04x",
-                frame, order, x, y, code & 0xFF, tpage, clut);
-        if ((code & 0x04) != 0) {
-            if (coveredTriangle == 0)
-                TraceTriangleTexel(&v[0], &v[1], &v[2], x, y,
-                                   offsetX, offsetY, "012");
-            else if (coveredTriangle == 1)
-                TraceTriangleTexel(&v[1], &v[3], &v[2], x, y,
-                                   offsetX, offsetY, "132");
-        }
-    } else {
-        fprintf(stderr,
-                "gpu-prim frame=%llu order=%llu code=%02x "
-                "tpage=%04x clut=%04x",
-                frame, order, code & 0xFF, tpage, clut);
-    }
-    for (i = 0; i < count; i++) {
-        fprintf(stderr, " v%d=%d,%d/%u,%u/%02x%02x%02x%02x",
-                i, v[i].x + offsetX, v[i].y + offsetY, v[i].u, v[i].v,
-                v[i].r, v[i].g, v[i].b, v[i].a);
-    }
-    fputc('\n', stderr);
-}
-
 static int writePacket(Vertex* v, int code, int n, u_long* packet, u16* pOut) {
     int w;
     if (!n) {
@@ -1101,6 +841,30 @@ static int writePacket(Vertex* v, int code, int n, u_long* packet, u16* pOut) {
         w++;
     }
     return w;
+}
+
+static void FixupFlipUV(Vertex* v, int hasFourVertices) {
+    bool fix_u = (v[0].x > v[1].x) ^ (v[0].u > v[1].u);
+    fix_u |= (v[0].x > v[2].x) ^ (v[0].u > v[2].u);
+    if (fix_u) {
+        v[0].u++;
+        v[1].u++;
+        v[2].u++;
+        if (hasFourVertices) {
+            v[3].u++;
+        }
+    }
+
+    bool fix_v = (v[0].y > v[1].y) ^ (v[0].v > v[1].v);
+    fix_v |= (v[0].y > v[2].y) ^ (v[0].v > v[2].v);
+    if (fix_v) {
+        v[0].v++;
+        v[1].v++;
+        v[2].v++;
+        if (hasFourVertices) {
+            v[3].v++;
+        }
+    }
 }
 
 static inline bool is_subtract_abr(const Vertex* v) {
