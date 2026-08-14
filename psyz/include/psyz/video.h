@@ -192,6 +192,18 @@ unsigned Psyz_VideoGetInternalResolution(void);
 int Psyz_VideoVSync(int mode);
 
 /**
+ * @brief Present the current frame between game VSync(0) calls
+ *
+ * Runs the platform present and event pump without advancing the VBlank
+ * counters or the frame limiter, so game timing derived from VSync(1) is
+ * unaffected. For host renderers that present interpolated frames while
+ * the game waits out its frame-sync interval.
+ *
+ * @return 0 on success
+ */
+int Psyz_VideoPresentIntermediate(void);
+
+/**
  * @brief Get frame timing statistics
  *
  * @param stats Output structure to fill

@@ -29,6 +29,13 @@ static void PlatformBackend_SetDriverVsync(bool enable);
 static void PlatformBackend_Present(void);
 static void QuitPlatform(void);
 
+// When set, the next Present must not block waiting for a swapchain image:
+// intermediate presents from a host renderer run inside the game's
+// frame-sync wait, and stalling there quantizes the logic tick to the
+// display refresh (observed as slow motion). Backends that cannot acquire
+// without blocking simply skip the frame.
+static bool present_nonblocking_request = false;
+
 #ifndef PSYZ_TITLE
 #define PSYZ_TITLE "PSY-Z"
 #endif
@@ -388,6 +395,14 @@ int Psyz_VideoVSync(int mode) {
         limitless_vsync_units = 0;
     }
     return ret;
+}
+
+int Psyz_VideoPresentIntermediate(void) {
+    present_nonblocking_request = true;
+    PlatformBackend_Present();
+    present_nonblocking_request = false;
+    PollEvents();
+    return 0;
 }
 
 int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode) {
