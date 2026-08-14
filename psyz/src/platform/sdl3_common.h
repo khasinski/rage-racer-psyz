@@ -390,6 +390,12 @@ int Psyz_VideoVSync(int mode) {
     return ret;
 }
 
+int Psyz_VideoPresentIntermediate(void) {
+    PlatformBackend_Present();
+    PollEvents();
+    return 0;
+}
+
 int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode) {
     if (mode < 0 || mode > 3) {
         return -1;
