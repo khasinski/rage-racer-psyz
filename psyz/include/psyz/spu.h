@@ -128,6 +128,14 @@ void Psyz_SpuMemWrite(unsigned int offset, const void* src, unsigned int size);
  */
 unsigned char* Psyz_SpuGetRam(void);
 
+/* Pure DSP helpers exposed for unit testing. */
+void Psyz_SpuDecodeAdpcmBlock(const unsigned char block[16], short* hist1,
+                              short* hist2, short out[28],
+                              unsigned char* flags);
+unsigned Psyz_SpuAdsrDenominator(int rate);
+int Psyz_SpuAdsrIncrease(int rate);
+int Psyz_SpuAdsrDecrease(int rate);
+
 /**
  * @brief Generate stereo 16-bit LE PCM frames into out (interleaved L, R)
  *

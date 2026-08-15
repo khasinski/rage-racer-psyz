@@ -64,6 +64,10 @@ static u32 read_variable_length(const u8** cursor) {
     return value;
 }
 
+u32 Psyz_SndReadVarLength(const u8** cursor) {
+    return read_variable_length(cursor);
+}
+
 static void reset_sequence_channels(PsyzSeqState* seq) {
     for (int channel = 0; channel < PSYZ_SEQ_CHANNELS; channel++) {
         seq->channels[channel].program = channel;

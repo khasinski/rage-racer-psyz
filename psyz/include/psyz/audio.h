@@ -61,6 +61,8 @@ unsigned long long Psyz_SeqNoteOnCount(void);
 unsigned long long Psyz_SeqVoiceStartCount(void);
 /** Number of live voice-pitch changes issued through libsnd. */
 unsigned long long Psyz_SndPitchUpdateCount(void);
+/* MIDI/SEQ variable-length quantity reader, exposed for unit testing. */
+unsigned int Psyz_SndReadVarLength(const unsigned char** cursor);
 void Psyz_AudioResetMetrics(void);
 
 #ifdef __cplusplus

@@ -149,6 +149,12 @@ int Psyz_SpuSetKeyOnTracePath(const char* path) {
 
 u8* Psyz_SpuGetRam(void) { return spu.ram; }
 
+void Psyz_SpuDecodeAdpcmBlock(const unsigned char block[16], short* hist1,
+                              short* hist2, short out[28],
+                              unsigned char* flags) {
+    spu_adpcm_decode_block(block, hist1, hist2, out, flags);
+}
+
 void Psyz_SpuInit(void) {
     if (spu.initialized)
         return;
@@ -421,6 +427,10 @@ static int adsr_num_decrease(int rate) {
     return rate < 48 ? (-8 + (rate & 3)) << (11 - (rate >> 2))
                      : (-8 + (rate & 3));
 }
+
+unsigned Psyz_SpuAdsrDenominator(int rate) { return adsr_denominator(rate); }
+int Psyz_SpuAdsrIncrease(int rate) { return adsr_num_increase(rate); }
+int Psyz_SpuAdsrDecrease(int rate) { return adsr_num_decrease(rate); }
 
 // process voice ADSR envelope by one sample, calculate ADSR envelope volume
 static void voice_envelope_step(VoiceState* vs) {
