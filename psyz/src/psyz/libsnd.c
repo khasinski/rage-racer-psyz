@@ -494,13 +494,28 @@ static short set_voice_pitch(short voice, short vabId, short prog,
                              short note, short fine) {
     if (voice < 0 || voice >= NUM_VOICES ||
         _svm_voice[voice].vabId != vabId ||
-        _svm_voice[voice].prog != prog || _SsVmVSetUp(vabId, prog) != 0)
+        _svm_voice[voice].prog != prog || _SsVmVSetUp(vabId, prog) != 0) {
+        if (getenv("PSYZ_SND_PITCH_TRACE"))
+            fprintf(stderr,
+                    "set_voice_pitch reject voice=%d vab=%d(cur %d) "
+                    "prog=%d(cur %d)\n",
+                    voice, vabId,
+                    voice >= 0 && voice < NUM_VOICES
+                        ? _svm_voice[voice].vabId : -99,
+                    prog,
+                    voice >= 0 && voice < NUM_VOICES
+                        ? _svm_voice[voice].prog : -99);
         return -1;
+    }
     _svm_cur.tone = _svm_voice[voice].tone;
     _svm_cur.field_7_fake_program = _svm_voice[voice].unk10;
     _svm_sreg_buf[voice].pitch = note2pitch2(note, fine);
     _svm_sreg_dirty[voice] |= 4;
-    _svm_voice[voice].note = note;
+    /* PsyQ's SsUtChangePitch only writes the pitch register; the voice
+     * keeps its key-on note. Rage Racer relies on that: it always passes
+     * old_note 0x3C (the note it keyed with), so recording new_note here
+     * made the very next update fail and froze every pitched effect
+     * (engine revs, skids, impacts) after its first change. */
     _svm_voice[voice].unk04 = _svm_sreg_buf[voice].pitch;
     psyz_snd_pitch_update_count++;
     return 0;
@@ -510,8 +525,15 @@ short SsUtChangePitch(short voice, short vabId, short prog, short old_note,
                       short old_fine, short new_note, short new_fine) {
     (void)old_fine;
     if (voice < 0 || voice >= NUM_VOICES ||
-        _svm_voice[voice].note != old_note)
+        _svm_voice[voice].note != old_note) {
+        if (getenv("PSYZ_SND_PITCH_TRACE"))
+            fprintf(stderr,
+                    "SsUtChangePitch reject voice=%d old_note=%d(cur %d)\n",
+                    voice, old_note,
+                    voice >= 0 && voice < NUM_VOICES
+                        ? _svm_voice[voice].note : -99);
         return -1;
+    }
     return set_voice_pitch(voice, vabId, prog, new_note, new_fine);
 }
 
