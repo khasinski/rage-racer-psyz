@@ -99,6 +99,8 @@ typedef struct {
     u8 gpos;        // index to next decoded sample in gwin
     u8 active;
     u8 needs_decode;
+    u8 self_primed_loop; // repeat addr defaulted to start at key on
+    u8 passed_end;       // consumed an END block since key on (ENDX)
     int env_vol;          // mirrors SPU_VOICE_REG::volumex
     unsigned env_counter; // rate divider, increases by 1 for all voice duration
     AdsrState env_state;  // voice phase, works like a state machine
@@ -229,6 +231,18 @@ static void spu_key_on_voice(int v) {
         ((unsigned)rxx->voice[v].addr << 3) & (PSYZ_SPU_RAM_SIZE - 1);
     vs->repeat_addr =
         ((unsigned)rxx->voice[v].loop_addr << 3) & (PSYZ_SPU_RAM_SIZE - 1);
+    /* Hardware primes the repeat address with the start address at key on
+     * unless software programmed one. Samples whose end block carries
+     * END+REPEAT but no LOOP-START marker (Rage Racer's engine drone)
+     * depend on this to loop back to their own start; reading the stale
+     * register sent them to address 0 instead, where a stray END block
+     * killed the voice after one pass. */
+    vs->self_primed_loop = 0;
+    vs->passed_end = 0;
+    if (vs->repeat_addr == 0) {
+        vs->repeat_addr = vs->cur_addr;
+        vs->self_primed_loop = 1;
+    }
     vs->hist1 = vs->hist2 = 0;
     vs->sample_idx = ADPCM_BLOCK_SAMPLES; // force decode on first consume
     vs->block_flags = 0;
@@ -291,13 +305,23 @@ void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value) {
         }
     } else if (reg_offset == offsetof(SPU_RXX, key_off[0])) { // voices 0..15
         for (int v = 0; v < 16; v++) {
-            if (value & (1u << v))
+            if (value & (1u << v)) {
                 spu.voice[v].key_off = 1;
+                if (spu_key_on_trace) {
+                    fprintf(spu_key_on_trace, "%d,OFF\n", v);
+                    fflush(spu_key_on_trace);
+                }
+            }
         }
     } else if (reg_offset == offsetof(SPU_RXX, key_off[1])) { // voices 16..23
         for (int v = 0; v < 8; v++) {
-            if (value & (1u << v))
+            if (value & (1u << v)) {
                 spu.voice[16 + v].key_off = 1;
+                if (spu_key_on_trace) {
+                    fprintf(spu_key_on_trace, "%d,OFF\n", 16 + v);
+                    fflush(spu_key_on_trace);
+                }
+            }
         }
     } else if (reg_offset == offsetof(SPU_RXX, trans_addr)) {
         Psyz_SpuSetTransferAddr((unsigned)value << 3);
@@ -331,6 +355,13 @@ int Psyz_SpuVoiceKeyStatus(int voice) {
     vs = &spu.voice[voice];
     if (!vs->active || vs->env_state == ADSR_OFF)
         return 0; /* SPU_OFF */
+    /* A sample that reached its END block and only loops because key on
+     * primed the repeat address with the start (no loop marker, no
+     * software-set loop point) keeps sounding - the engine drone depends
+     * on that - but reports as done, the way PsyQ code treats ENDX'd
+     * voices: reusable, silenced when something re-keys them. */
+    if (vs->passed_end && vs->self_primed_loop)
+        return 0; /* SPU_OFF (reclaimable) */
     if (vs->key_off)
         return vs->env_vol != 0 ? 2 : 0; /* SPU_OFF_ENV_ON / SPU_OFF */
     return vs->env_vol != 0 ? 1 : 3; /* SPU_ON / SPU_ON_ENV_OFF */
@@ -347,6 +378,7 @@ static int voice_decode_one_sample(VoiceState* vs) {
     if (vs->sample_idx >= ADPCM_BLOCK_SAMPLES) {
         // end of block, and handle loop/end flags
         if (!vs->needs_decode && (vs->block_flags & 0x01)) {
+            vs->passed_end = 1;
             if (!(vs->block_flags & 0x02)) {
                 vs->active = 0;
                 vs->gwin[vs->gpos] = 0;
@@ -569,6 +601,27 @@ static void spu_tick(short* out) {
 
     // decode+resample, scale volume by ADSR envelope, then mix voices
     short v1_sample = 0, v3_sample = 0;
+    /* PSYZ_SPU_VOICE_TRACE=<n>: per-second state dump of one voice. */
+    static long dbg_voice = -2;
+    static unsigned dbg_ticks;
+    static unsigned long long dbg_energy;
+    if (dbg_voice == -2) {
+        const char* env = getenv("PSYZ_SPU_VOICE_TRACE");
+        dbg_voice = env ? atol(env) : -1;
+    }
+    if (dbg_voice >= 0 && ++dbg_ticks >= 44100) {
+        VoiceState* vs = &spu.voice[dbg_voice];
+        fprintf(stderr,
+                "spu-voice %ld active=%d env_state=%d env_vol=%d "
+                "pitch=%u vol=%d,%d addr=%u energy=%llu\n",
+                dbg_voice, vs->active, vs->env_state, vs->env_vol,
+                (unsigned)rxx->voice[dbg_voice].pitch,
+                (short)rxx->voice[dbg_voice].volume.left,
+                (short)rxx->voice[dbg_voice].volume.right,
+                (unsigned)rxx->voice[dbg_voice].addr, dbg_energy);
+        dbg_ticks = 0;
+        dbg_energy = 0;
+    }
     for (int v = 0; v < PSYZ_SPU_NUM_VOICES; v++) {
         if (!spu.voice[v].active)
             continue;
@@ -576,6 +629,9 @@ static void spu_tick(short* out) {
         voice_envelope_step(&spu.voice[v]);
         if (spu.voice[v].env_state == ADSR_OFF) {
             s = 0;
+        }
+        if (v == dbg_voice) {
+            dbg_energy += (unsigned long long)(s < 0 ? -s : s);
         }
         // capture buffer stores sample pre-envelope, weirdly only after
         // processing the ADSR envelope -- this might need a re-test on real HW
