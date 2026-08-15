@@ -24,6 +24,15 @@
 #define VSYNC_NTSC 59.94
 #define VSYNC_PAL 50.0
 
+#include "vsync_timing.h"
+
+/* The VSync(1) root counter may tick at a different rate than the host
+ * presentation: PAL games simulate multi-field waits at 50 Hz. Configure
+ * with -DPSYZ_VSYNC_COUNTER_HZ=50.0; default follows the target rate. */
+#ifndef PSYZ_VSYNC_COUNTER_HZ
+#define PSYZ_VSYNC_COUNTER_HZ 0.0 /* 0 = follow target_frame_rate */
+#endif
+
 // hooks the including renderer backend must implement
 static void PlatformBackend_SetDriverVsync(bool enable);
 static void PlatformBackend_Present(void);
@@ -380,9 +389,12 @@ int Psyz_VideoVSync(int mode) {
             Uint64 now = SDL_GetPerformanceCounter();
             double elapsed_us =
                 GetElapsedMicroseconds(last_vsync_counter, now);
-            unsigned whole_vblanks =
-                (unsigned)(elapsed_us / target_frame_time_us);
-            ret = (unsigned short)(whole_vblanks * 0x100u);
+            double counter_period_us =
+                PSYZ_VSYNC_COUNTER_HZ > 0.0
+                    ? 1000000.0 / PSYZ_VSYNC_COUNTER_HZ
+                    : target_frame_time_us;
+            ret = (unsigned short)Psyz_VsyncCounterUnits(
+                elapsed_us, target_frame_time_us, counter_period_us);
         }
     } else {
         ret = 0;
