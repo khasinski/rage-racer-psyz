@@ -127,10 +127,17 @@ static struct {
     unsigned cd_ring_read;
     unsigned cd_ring_count; // number of valid frames in ring
 
+    unsigned reverb_addr; // byte address in the SPU reverb work area
+    short reverb_out[2];
+    u8 reverb_phase; // the reverb core advances at 22050 Hz
+
     u8 initialized;
 } spu;
 
 static FILE* spu_key_on_trace;
+static unsigned long long reverb_input_energy;
+static unsigned long long reverb_output_energy;
+static unsigned long long reverb_tail_frames;
 
 int Psyz_SpuSetKeyOnTracePath(const char* path) {
     if (spu_key_on_trace) {
@@ -327,6 +334,8 @@ void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value) {
         Psyz_SpuSetTransferAddr((unsigned)value << 3);
     } else if (reg_offset == offsetof(SPU_RXX, trans_fifo)) {
         Psyz_SpuFifoWrite(value);
+    } else if (reg_offset == offsetof(SPU_RXX, rev_work_addr)) {
+        spu.reverb_addr = ((unsigned)value << 3) & (PSYZ_SPU_RAM_SIZE - 2);
     }
 }
 
@@ -569,6 +578,120 @@ static inline int voice_vol(unsigned short reg) {
     return v;
 }
 
+static inline int reverb_mul(int value, short volume) {
+    return (value * (int)volume) >> 15;
+}
+
+static unsigned reverb_address(SPU_RXX* rxx, u16 offset, int displacement) {
+    unsigned base = ((unsigned)rxx->rev_work_addr << 3) &
+                    (PSYZ_SPU_RAM_SIZE - 2);
+    unsigned size = PSYZ_SPU_RAM_SIZE - base;
+    int64_t relative;
+    if (size < 2)
+        return PSYZ_SPU_RAM_SIZE - 2;
+    relative = (int64_t)spu.reverb_addr - base + ((unsigned)offset << 3) +
+               displacement;
+    relative %= size;
+    if (relative < 0)
+        relative += size;
+    return base + ((unsigned)relative & ~1u);
+}
+
+static short reverb_read(SPU_RXX* rxx, u16 offset, int displacement) {
+    unsigned address = reverb_address(rxx, offset, displacement);
+    return (short)((unsigned)spu.ram[address] |
+                   ((unsigned)spu.ram[address + 1] << 8));
+}
+
+static void reverb_write(SPU_RXX* rxx, u16 offset, int value) {
+    unsigned address = reverb_address(rxx, offset, 0);
+    short sample = clamp16(value);
+    if (!(rxx->spucnt & SPU_CTRL_MASK_REVERB_MASTER_ENABLE))
+        return;
+    spu.ram[address] = (u8)sample;
+    spu.ram[address + 1] = (u8)((u16)sample >> 8);
+}
+
+static void reverb_step(SPU_RXX* rxx, int input_left, int input_right) {
+    int lin = reverb_mul(input_left, (short)rxx->vLIN);
+    int rin = reverb_mul(input_right, (short)rxx->vRIN);
+    short viir = (short)rxx->vIIR;
+    short vwall = (short)rxx->vWALL;
+    int previous, reflected;
+    int left, right, delayed;
+
+    reverb_input_energy +=
+        (unsigned long long)(input_left < 0 ? -input_left : input_left) +
+        (unsigned long long)(input_right < 0 ? -input_right : input_right);
+
+    previous = reverb_read(rxx, rxx->mLSAME, -2);
+    reflected = lin + reverb_mul(reverb_read(rxx, rxx->dLSAME, 0), vwall);
+    reverb_write(rxx, rxx->mLSAME,
+                 reverb_mul(reflected - previous, viir) + previous);
+    previous = reverb_read(rxx, rxx->mRSAME, -2);
+    reflected = rin + reverb_mul(reverb_read(rxx, rxx->dRSAME, 0), vwall);
+    reverb_write(rxx, rxx->mRSAME,
+                 reverb_mul(reflected - previous, viir) + previous);
+
+    previous = reverb_read(rxx, rxx->mLDIFF, -2);
+    reflected = lin + reverb_mul(reverb_read(rxx, rxx->dRDIFF, 0), vwall);
+    reverb_write(rxx, rxx->mLDIFF,
+                 reverb_mul(reflected - previous, viir) + previous);
+    previous = reverb_read(rxx, rxx->mRDIFF, -2);
+    reflected = rin + reverb_mul(reverb_read(rxx, rxx->dLDIFF, 0), vwall);
+    reverb_write(rxx, rxx->mRDIFF,
+                 reverb_mul(reflected - previous, viir) + previous);
+
+    left = reverb_mul(reverb_read(rxx, rxx->mLCOMB1, 0),
+                      (short)rxx->vCOMB1) +
+           reverb_mul(reverb_read(rxx, rxx->mLCOMB2, 0),
+                      (short)rxx->vCOMB2) +
+           reverb_mul(reverb_read(rxx, rxx->mLCOMB3, 0),
+                      (short)rxx->vCOMB3) +
+           reverb_mul(reverb_read(rxx, rxx->mLCOMB4, 0),
+                      (short)rxx->vCOMB4);
+    right = reverb_mul(reverb_read(rxx, rxx->mRCOMB1, 0),
+                       (short)rxx->vCOMB1) +
+            reverb_mul(reverb_read(rxx, rxx->mRCOMB2, 0),
+                       (short)rxx->vCOMB2) +
+            reverb_mul(reverb_read(rxx, rxx->mRCOMB3, 0),
+                       (short)rxx->vCOMB3) +
+            reverb_mul(reverb_read(rxx, rxx->mRCOMB4, 0),
+                       (short)rxx->vCOMB4);
+
+    delayed = reverb_read(rxx, rxx->mLAPF1, -(int)(rxx->dAPF1 << 3));
+    left -= reverb_mul(delayed, (short)rxx->vAPF1);
+    reverb_write(rxx, rxx->mLAPF1, left);
+    left = reverb_mul(left, (short)rxx->vAPF1) + delayed;
+    delayed = reverb_read(rxx, rxx->mRAPF1, -(int)(rxx->dAPF1 << 3));
+    right -= reverb_mul(delayed, (short)rxx->vAPF1);
+    reverb_write(rxx, rxx->mRAPF1, right);
+    right = reverb_mul(right, (short)rxx->vAPF1) + delayed;
+
+    delayed = reverb_read(rxx, rxx->mLAPF2, -(int)(rxx->dAPF2 << 3));
+    left -= reverb_mul(delayed, (short)rxx->vAPF2);
+    reverb_write(rxx, rxx->mLAPF2, left);
+    left = reverb_mul(left, (short)rxx->vAPF2) + delayed;
+    delayed = reverb_read(rxx, rxx->mRAPF2, -(int)(rxx->dAPF2 << 3));
+    right -= reverb_mul(delayed, (short)rxx->vAPF2);
+    reverb_write(rxx, rxx->mRAPF2, right);
+    right = reverb_mul(right, (short)rxx->vAPF2) + delayed;
+
+    spu.reverb_out[0] = clamp16(reverb_mul(left, (short)rxx->rev_vol.left));
+    spu.reverb_out[1] = clamp16(reverb_mul(right, (short)rxx->rev_vol.right));
+    reverb_output_energy +=
+        (unsigned long long)(spu.reverb_out[0] < 0 ? -spu.reverb_out[0]
+                                                   : spu.reverb_out[0]) +
+        (unsigned long long)(spu.reverb_out[1] < 0 ? -spu.reverb_out[1]
+                                                   : spu.reverb_out[1]);
+    if (input_left == 0 && input_right == 0 &&
+        (spu.reverb_out[0] != 0 || spu.reverb_out[1] != 0))
+        reverb_tail_frames++;
+    spu.reverb_addr += 2;
+    if (spu.reverb_addr >= PSYZ_SPU_RAM_SIZE)
+        spu.reverb_addr = (unsigned)rxx->rev_work_addr << 3;
+}
+
 // generate one frame at 44100hz with voices mix, cd playback and volume control
 static void spu_tick(short* out) {
     SPU_RXX* rxx = (SPU_RXX*)&_spu_RXX->rxx;
@@ -576,6 +699,7 @@ static void spu_tick(short* out) {
 
     // accumulate frame to each separate channels
     int left_sum = 0, right_sum = 0;
+    int reverb_left = 0, reverb_right = 0;
 
     // Pre-fill CD ring buffer if running low
     if (spu.cd_ring_count < CD_RING_LOW_WATER) {
@@ -642,8 +766,18 @@ static void spu_tick(short* out) {
         }
         rxx->voice[v].volumex = (unsigned short)spu.voice[v].env_vol;
         s = (short)(((int)s * spu.voice[v].env_vol) >> 15); // apply ADSR vol
-        left_sum += (s * voice_vol(rxx->voice[v].volume.left)) >> 15;
-        right_sum += (s * voice_vol(rxx->voice[v].volume.right)) >> 15;
+        {
+            int voice_left =
+                (s * voice_vol(rxx->voice[v].volume.left)) >> 15;
+            int voice_right =
+                (s * voice_vol(rxx->voice[v].volume.right)) >> 15;
+            left_sum += voice_left;
+            right_sum += voice_right;
+            if (rxx->rev_mode[v >> 4] & (1u << (v & 15))) {
+                reverb_left += voice_left;
+                reverb_right += voice_right;
+            }
+        }
     }
 
     // Mute all voices. CD audio is mixed after, and not affected by mute.
@@ -655,7 +789,17 @@ static void spu_tick(short* out) {
     if (spucnt & SPU_CTRL_MASK_CD_AUDIO_ENABLE) {
         left_sum += (cd_left * rxx->cd_vol.left) >> 15;
         right_sum += (cd_right * rxx->cd_vol.right) >> 15;
+        if (spucnt & SPU_CTRL_MASK_CD_AUDIO_REVERB) {
+            reverb_left += (cd_left * rxx->cd_vol.left) >> 15;
+            reverb_right += (cd_right * rxx->cd_vol.right) >> 15;
+        }
     }
+
+    if ((spu.reverb_phase ^= 1) == 0) {
+        reverb_step(rxx, clamp16(reverb_left), clamp16(reverb_right));
+    }
+    left_sum += spu.reverb_out[0];
+    right_sum += spu.reverb_out[1];
 
     out[0] = clamp16((left_sum * clamp15(rxx->main_vol.left)) >> 14);
     out[1] = clamp16((right_sum * clamp15(rxx->main_vol.right)) >> 14);
@@ -683,4 +827,16 @@ void Psyz_SpuPullSamples(short* out, int num_frames) {
     for (int i = 0; i < num_frames; i++) {
         spu_tick(&out[i * 2]);
     }
+}
+
+unsigned long long Psyz_SpuReverbInputEnergy(void) {
+    return reverb_input_energy;
+}
+
+unsigned long long Psyz_SpuReverbOutputEnergy(void) {
+    return reverb_output_energy;
+}
+
+unsigned long long Psyz_SpuReverbTailFrames(void) {
+    return reverb_tail_frames;
 }

@@ -145,6 +145,11 @@ int Psyz_SpuVoiceKeyStatus(int voice);
 /** Append host SPU key-on register snapshots to a CSV file; NULL disables. */
 int Psyz_SpuSetKeyOnTracePath(const char* path);
 
+/** Diagnostic energy entering and leaving the hardware reverb core. */
+unsigned long long Psyz_SpuReverbInputEnergy(void);
+unsigned long long Psyz_SpuReverbOutputEnergy(void);
+unsigned long long Psyz_SpuReverbTailFrames(void);
+
 #ifdef __cplusplus
 }
 #endif

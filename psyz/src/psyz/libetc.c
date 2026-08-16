@@ -70,7 +70,8 @@ int SetIntrMask(int arg) {
 }
 
 int StopCallback(void) { NOT_IMPLEMENTED; }
-int ResetCallback(void) { NOT_IMPLEMENTED; }
+/* Host callbacks are owned by SDL and initialized with their subsystems. */
+int ResetCallback(void) { return 0; }
 void* DMACallback(int dma, void (*func)()) {
     NOT_IMPLEMENTED;
     return NULL;

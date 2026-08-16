@@ -394,6 +394,7 @@ static int cdda_start_sector = 0;
 static uint64_t cdda_frames_played = 0;
 static int is_playing = 0; // pause or unpause seeking through the CD stream
 static int is_muted = 0;   // return empty samples while CD keeps streaming
+static int cdda_ended = 0;  // physical EOF, distinct from pause or data reads
 
 // CD audio pull callback — called by SPU when its internal ring buffer
 // runs low. Fills `buf` with up to `max_frames` interleaved stereo frames.
@@ -415,6 +416,7 @@ static size_t cdda_pull_samples(short* buf, size_t max_frames) {
             } else {
                 DEBUGF("cd audio playback reached end of file");
                 is_playing = 0;
+                cdda_ended = 1;
                 hit_eof = 1;
                 break;
             }
@@ -742,6 +744,7 @@ static int open_track_at_cd_pos(void) {
     track_file = file;
     cdda_start_sector = sector;
     cdda_frames_played = 0;
+    cdda_ended = 0;
     return 0;
 }
 
@@ -797,6 +800,7 @@ static void psyz_stop() {
     need_cdda_rewind = 1;
     Psyz_AudioLock();
     is_playing = 0;
+    cdda_ended = 0;
     xa.active = 0;
     if (track_file) {
         fclose(track_file);
@@ -829,6 +833,14 @@ int Psyz_CdAudioPlaying(void) {
     return playing;
 }
 
+int Psyz_CdAudioEnded(void) {
+    int ended;
+    Psyz_AudioLock();
+    ended = cdda_ended;
+    Psyz_AudioUnlock();
+    return ended;
+}
+
 static void psyz_mute() {
     Psyz_AudioLock();
     is_muted = 1;
@@ -841,8 +853,6 @@ static void psyz_demute() {
     Psyz_AudioUnlock();
 }
 
-static void callback(void) { NOT_IMPLEMENTED; }
-
 int CD_init(void) {
     u_char nop_result[8];
     CD_com = 0;
@@ -851,14 +861,9 @@ int CD_init(void) {
     CD_cbsync = 0;
     CD_status1 = 0;
     CD_status = 0;
-    ResetCallback();
-    InterruptCallback(2, &callback);
     CD_cw(CdlNop, 0, nop_result, 0);
     if (CD_status & CdlStatShellOpen) {
         CD_cw(CdlNop, 0, nop_result, 0);
-    }
-    if (CD_cw(CdlReset, 0, 0, 0)) {
-        return -1;
     }
     if (CD_cw(CdlDemute, 0, 0, 0)) {
         return -1;
@@ -947,6 +952,12 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
         /* A following CdlPlay starts from the newly requested location even
          * when another CD-DA track is currently active. */
         need_cdda_rewind = 1;
+        break;
+    case CdlSeekL:
+    case CdlSeekP:
+        /* Setloc already records the destination. The host opens and seeks
+         * the track lazily on Play/Read, so there is no separate drive-head
+         * operation to perform here. */
         break;
     case CdlPlay:
         psyz_play();
@@ -1136,7 +1147,6 @@ int CD_cw(u_char com, u_char* param, u_char* result, s32 arg3) {
 }
 
 int CdInit(void) {
-    NOT_IMPLEMENTED;
     CdReset(1);
     return CD_init();
 }
