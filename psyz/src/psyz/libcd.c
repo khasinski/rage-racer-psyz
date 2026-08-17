@@ -444,7 +444,7 @@ end:
 }
 
 #define XA_DECODED_MAX_FRAMES 4032            // 18 blocks * 4 sub * 28 samples
-#define XA_STEP_Q16 ((37800u << 16) / 44100u) // 56173
+#define XA_STEP_Q16(rate) (((rate) << 16) / 44100u)
 
 static struct {
     short decoded[XA_DECODED_MAX_FRAMES * 2];
@@ -459,6 +459,7 @@ static struct {
     // Hermite ring: index [0]=oldest .. [3]=newest per channel
     short rh_l[4], rh_r[4];
     unsigned int phase; // 16.16 fractional position into the input stream
+    unsigned int step;  // source rate converted to a 44.1 kHz output step
     int cur_abs_sector; // absolute last sector used, for CdlGetlocL
 } xa;
 
@@ -470,6 +471,7 @@ static void xa_reset_stream(void) {
     memset(xa.rh_l, 0, sizeof(xa.rh_l));
     memset(xa.rh_r, 0, sizeof(xa.rh_r));
     xa.phase = 0;
+    xa.step = XA_STEP_Q16(37800u);
 }
 
 static int xa_sector_matches(unsigned char file, unsigned char channel) {
@@ -506,9 +508,13 @@ static void xa_decode_28(const unsigned char* blk, int sub, int nibble,
         const unsigned char byte = blk[16 + sub + j * 4];
         const int t = s4((byte >> (nibble * 4)) & 0x0F);
         const int s = (t << shift) + (((*prev) * f0 + (*prev2) * f1 + 32) / 64);
-        dst[j * stride] = clamp16(s);
+        const short final = clamp16(s);
+        dst[j * stride] = final;
         *prev2 = *prev;
-        *prev = s;
+        /* XA predictor history is the saturated 16-bit decoded sample.  Using
+         * the unclipped intermediate lets an overload grow without bound and
+         * turns otherwise valid movie audio into broadband noise. */
+        *prev = final;
     }
 }
 
@@ -574,10 +580,9 @@ static int xa_read_and_decode_sector(void) {
         int stereo = (ci & 0x03) == 1;
         int rate18900 = (ci & 0x04) != 0;
         int bits8 = (ci & 0x30) != 0;
-        if (rate18900 || bits8) {
-            LOG_ONCE(
-                "XA: 18900Hz or 8-bit not supported, decoding as 4bit/37800");
-        }
+        xa.step = XA_STEP_Q16(rate18900 ? 18900u : 37800u);
+        if (bits8)
+            LOG_ONCE("XA: 8-bit coding is not supported; decoding as 4-bit");
         if (stereo) {
             xa.decoded_count = xa_decode_user_stereo_4bit(user);
         } else {
@@ -663,7 +668,7 @@ static size_t xa_pull_samples(short* buf, size_t max_frames) {
             buf[written * 2 + 1] = hermite4(
                 xa.rh_r[0], xa.rh_r[1], xa.rh_r[2], xa.rh_r[3], xa.phase);
         }
-        xa.phase += XA_STEP_Q16;
+        xa.phase += xa.step;
         written++;
     }
 end:

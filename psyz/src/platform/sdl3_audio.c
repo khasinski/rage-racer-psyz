@@ -2,6 +2,7 @@
 #include <psyz/log.h>
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>
 #ifdef _MSC_VER
 #include <intrin.h>
 #else
@@ -13,6 +14,7 @@
 
 static SDL_AudioStream* sdl_stream;
 static SDL_Mutex* mutex;
+static FILE* pcm_dump;
 #ifdef _MSC_VER
 static volatile __int64 rendered_frames;
 static volatile __int64 rendered_energy;
@@ -66,6 +68,10 @@ static void SDLCALL audio_callback(void* userdata, SDL_AudioStream* stream,
         if (batch > 2048)
             batch = 2048;
         Psyz_SpuPullSamples(buf, batch);
+        if (pcm_dump) {
+            fwrite(buf, sizeof(short) * N_CHANNELS, (size_t)batch, pcm_dump);
+            fflush(pcm_dump);
+        }
         unsigned long long energy = 0;
         for (int i = 0; i < batch * N_CHANNELS; i++) {
             int sample = buf[i];
@@ -85,6 +91,11 @@ int Psyz_AudioInit(void) {
         return 0;
     }
     Psyz_SpuInit();
+    {
+        const char* dump_path = getenv("PSYZ_AUDIO_PCM_DUMP");
+        if (dump_path && *dump_path)
+            pcm_dump = fopen(dump_path, "wb");
+    }
     if (!SDL_WasInit(SDL_INIT_AUDIO)) {
         if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
             ERRORF("failed to init SDL audio: %s", SDL_GetError());
@@ -97,20 +108,24 @@ int Psyz_AudioInit(void) {
         .channels = N_CHANNELS,
         .freq = PSYZ_SPU_SAMPLE_RATE,
     };
+    mutex = SDL_CreateMutex();
+    if (!mutex) {
+        ERRORF("failed to create audio mutex: %s", SDL_GetError());
+        return -1;
+    }
+
     sdl_stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, audio_callback, NULL);
     if (!sdl_stream) {
         ERRORF("failed to open audio device: %s", SDL_GetError());
+        SDL_DestroyMutex(mutex);
+        mutex = NULL;
         return -1;
     }
+    /* Opening starts the stream paused.  The callback takes this mutex, so it
+     * must exist before the device is resumed; previously the first callback
+     * raced initialization and could drop or split the opening XA/VAB data. */
     SDL_ResumeAudioStreamDevice(sdl_stream);
-
-    mutex = SDL_CreateMutex();
-    if (!mutex) {
-        ERRORF("failed to create audio mutex: %s", SDL_GetError());
-        SDL_DestroyAudioStream(sdl_stream);
-        return -1;
-    }
 
     is_audio_init = true;
     DEBUGF("audio initialized");
@@ -118,6 +133,10 @@ int Psyz_AudioInit(void) {
 }
 
 void Psyz_AudioDestroy(void) {
+    if (pcm_dump) {
+        fclose(pcm_dump);
+        pcm_dump = NULL;
+    }
     if (mutex) {
         SDL_DestroyMutex(mutex);
         mutex = NULL;

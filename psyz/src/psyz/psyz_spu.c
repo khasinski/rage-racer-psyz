@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../../decomp/src/libspu/libspu_private.h"
-#include "spu_gauss.h"
+#include "spu_gauss_exact.h"
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
 _Static_assert(sizeof(SPU_RXX) == 0x200, "SPU_RXX must be 0x200 bytes");
@@ -135,6 +135,8 @@ static struct {
 } spu;
 
 static FILE* spu_key_on_trace;
+static FILE* spu_voice_pcm_dump;
+static int spu_voice_pcm_dump_index = -1;
 static unsigned long long reverb_input_energy;
 static unsigned long long reverb_output_energy;
 static unsigned long long reverb_tail_frames;
@@ -160,6 +162,14 @@ void Psyz_SpuInit(void) {
     if (spu.initialized)
         return;
     memset(&spu, 0, sizeof(spu));
+    {
+        const char* path = getenv("PSYZ_SPU_VOICE_PCM_DUMP");
+        const char* voice = getenv("PSYZ_SPU_VOICE_PCM_DUMP_INDEX");
+        if (path && *path && voice) {
+            spu_voice_pcm_dump = fopen(path, "wb");
+            spu_voice_pcm_dump_index = atoi(voice);
+        }
+    }
     spu.initialized = 1;
     INFOF("SPU emulation initialized");
 }
@@ -187,6 +197,8 @@ void Psyz_SpuReset(int hot) {
     }
     spu.initialized = 1;
 }
+
+void* Psyz_SpuRegisterBase(void) { return (void*)&_spu_RXX->rxx; }
 
 void Psyz_SpuSetTransferAddr(unsigned int addr) {
     spu.transfer_addr = addr & (PSYZ_SPU_RAM_SIZE - 1);
@@ -246,11 +258,18 @@ static void spu_key_on_voice(int v) {
      * killed the voice after one pass. */
     vs->self_primed_loop = 0;
     vs->passed_end = 0;
-    if (vs->repeat_addr == 0) {
+    /* Rage Racer's continuously managed engine layers (voices 14..17) use
+     * END+REPEAT samples without a LOOP-START block.  Do not apply that
+     * compatibility rule to the fixed UI-effect voices: several one-shot
+     * menu VAGs also carry REPEAT in their terminal block, and priming those
+     * to their own start turns PRESS START into the wrong, endless sound. */
+    if (v >= 14 && v <= 17 && vs->repeat_addr == 0) {
         vs->repeat_addr = vs->cur_addr;
         vs->self_primed_loop = 1;
     }
     vs->hist1 = vs->hist2 = 0;
+    memset(vs->gwin, 0, sizeof(vs->gwin));
+    vs->gpos = 0;
     vs->sample_idx = ADPCM_BLOCK_SAMPLES; // force decode on first consume
     vs->block_flags = 0;
     vs->needs_decode = 1;
@@ -261,12 +280,8 @@ static void spu_key_on_voice(int v) {
         vs->sinc = 1;
 
     // Start spos at 1.0 so the first voice_step consumes exactly one sample.
-    // The gauss window stays mostly zero-padded for several ticks, producing
-    // the silent warmup-then-ringing pattern observed in PS1 captures
+    // The gauss window starts zero-padded, as the hardware does on KEY_ON.
     vs->spos = 0x10000;
-
-    // We do not reset vs->gpos at key-on for accuracy. On real PS1 hardware,
-    // a voice on will carry the residual state from prior voice activity
     vs->active = 1;
 
     // reset the envelope to a fresh attack from zero
@@ -402,6 +417,20 @@ static int voice_decode_one_sample(VoiceState* vs) {
     if (vs->needs_decode) {
         unsigned char block[ADPCM_BLOCK_BYTES];
         Psyz_SpuMemRead(vs->cur_addr, block, ADPCM_BLOCK_BYTES);
+        /* Sony's VAB tools terminate one-shot VAGs with 00 07 followed by
+         * fourteen 0x77 bytes.  It is a stop/mute sentinel, not an ADPCM
+         * payload and not a one-block loop.  Decoding it produces a loud
+         * alien tail; honoring its REPEAT bits loops that tail forever. */
+        int vab_stop_sentinel = block[0] == 0 && (block[1] & 0x07) == 0x07;
+        for (int i = 2; vab_stop_sentinel && i < ADPCM_BLOCK_BYTES; i++)
+            vab_stop_sentinel = block[i] == 0x77;
+        if (vab_stop_sentinel) {
+            vs->passed_end = 1;
+            vs->active = 0;
+            vs->gwin[vs->gpos] = 0;
+            vs->gpos = (vs->gpos + 1) & 3;
+            return 0;
+        }
         spu_adpcm_decode_block(
             block, &vs->hist1, &vs->hist2, vs->samples, &vs->block_flags);
         if (vs->block_flags & 0x04) {
@@ -552,17 +581,17 @@ static short voice_step(int v) {
     }
 
     // GAUSS interpolation
-    int vl = (vs->spos >> 6) & ~3;
+    unsigned phase = (vs->spos >> 8) & 0xFF;
     int g0 = vs->gwin[vs->gpos & 3];
     int g1 = vs->gwin[(vs->gpos + 1) & 3];
     int g2 = vs->gwin[(vs->gpos + 2) & 3];
     int g3 = vs->gwin[(vs->gpos + 3) & 3];
-    int acc = (spu_gauss_tbl[vl + 0] * g0) & ~2047;
-    acc += (spu_gauss_tbl[vl + 1] * g1) & ~2047;
-    acc += (spu_gauss_tbl[vl + 2] * g2) & ~2047;
-    acc += (spu_gauss_tbl[vl + 3] * g3) & ~2047;
+    int acc = spu_gauss_exact[0x0FF - phase] * g0;
+    acc += spu_gauss_exact[0x1FF - phase] * g1;
+    acc += spu_gauss_exact[0x100 + phase] * g2;
+    acc += spu_gauss_exact[0x000 + phase] * g3;
     vs->spos += vs->sinc;
-    return clamp16(acc >> 12);
+    return clamp16(acc >> 15);
 }
 
 static inline int voice_vol(unsigned short reg) {
@@ -766,11 +795,13 @@ static void spu_tick(short* out) {
         }
         rxx->voice[v].volumex = (unsigned short)spu.voice[v].env_vol;
         s = (short)(((int)s * spu.voice[v].env_vol) >> 15); // apply ADSR vol
+        if (spu_voice_pcm_dump && v == spu_voice_pcm_dump_index)
+            fwrite(&s, sizeof(s), 1, spu_voice_pcm_dump);
         {
             int voice_left =
-                (s * voice_vol(rxx->voice[v].volume.left)) >> 15;
+                (s * voice_vol(rxx->voice[v].volume.left)) >> 14;
             int voice_right =
-                (s * voice_vol(rxx->voice[v].volume.right)) >> 15;
+                (s * voice_vol(rxx->voice[v].volume.right)) >> 14;
             left_sum += voice_left;
             right_sum += voice_right;
             if (rxx->rev_mode[v >> 4] & (1u << (v & 15))) {

@@ -300,6 +300,12 @@ static void UpdateTargetFramerate(double fps) {
     ConfigureVSync(target_frame_rate);
 }
 
+int Psyz_VideoSetTargetFramerate(double fps) {
+    if (fps < 1.0 || fps > 1000.0) return -1;
+    UpdateTargetFramerate(fps);
+    return 0;
+}
+
 // Initialize the timing/vsync state. Call once at the end of InitPlatform.
 static void Sdl3Common_TimingInit(void) {
     elapsed_from_beginning = (Uint32)SDL_GetTicks();

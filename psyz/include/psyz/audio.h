@@ -63,6 +63,9 @@ unsigned long long Psyz_SeqVoiceStartCount(void);
 unsigned long long Psyz_SndPitchUpdateCount(void);
 void Psyz_AudioResetMetrics(void);
 
+/** Raw emulated SPU register base for native fixed-address game code. */
+void *Psyz_SpuRegisterBase(void);
+
 #ifdef __cplusplus
 }
 #endif

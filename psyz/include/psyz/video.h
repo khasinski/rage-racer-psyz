@@ -93,6 +93,9 @@ typedef struct {
  */
 int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode);
 
+/** Select the emulated video standard's base VBlank frequency. */
+int Psyz_VideoSetTargetFramerate(double fps);
+
 /**
  * @brief Set dithering mode (default: AUTO)
  *
