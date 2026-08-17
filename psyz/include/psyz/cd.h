@@ -79,6 +79,8 @@ void Psyz_CdBeginDataRead(void);
 
 /** Return non-zero while CD-DA or XA audio is actively playing. */
 int Psyz_CdAudioPlaying(void);
+unsigned long long Psyz_CdAudioFramesPulled(void);
+unsigned long long Psyz_CdAudioEnergy(void);
 
 /** Return non-zero after the active CD-DA track reaches its physical end. */
 int Psyz_CdAudioEnded(void);

@@ -55,6 +55,7 @@ void Psyz_SpuWrite(unsigned int reg_offset, unsigned short value);
  * @return 16-bit register value
  */
 unsigned short Psyz_SpuRead(unsigned int reg_offset);
+unsigned long long Psyz_SpuCdMixEnergy(void);
 
 /**
  * @brief Read back the current SPU transfer address

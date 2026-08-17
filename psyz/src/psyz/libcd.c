@@ -395,6 +395,8 @@ static uint64_t cdda_frames_played = 0;
 static int is_playing = 0; // pause or unpause seeking through the CD stream
 static int is_muted = 0;   // return empty samples while CD keeps streaming
 static int cdda_ended = 0;  // physical EOF, distinct from pause or data reads
+static unsigned long long cdda_frames_pulled = 0;
+static unsigned long long cdda_energy = 0;
 
 // CD audio pull callback — called by SPU when its internal ring buffer
 // runs low. Fills `buf` with up to `max_frames` interleaved stereo frames.
@@ -430,10 +432,15 @@ static size_t cdda_pull_samples(short* buf, size_t max_frames) {
         } else {
             memcpy(&buf[written * 2], &cd_buf[cd_buf_pos * 2],
                    n * N_CHANNELS * SAMPLE_SIZE);
+            for (size_t i = 0; i < n * N_CHANNELS; i++) {
+                int sample = buf[written * 2 + i];
+                cdda_energy += (unsigned long long)(sample < 0 ? -sample : sample);
+            }
         }
         cd_buf_pos += n;
         written += n;
         cdda_frames_played += n;
+        cdda_frames_pulled += n;
     }
 end:
     Psyz_AudioUnlock();
@@ -749,6 +756,8 @@ static int open_track_at_cd_pos(void) {
     track_file = file;
     cdda_start_sector = sector;
     cdda_frames_played = 0;
+    cdda_frames_pulled = 0;
+    cdda_energy = 0;
     cdda_ended = 0;
     return 0;
 }
@@ -836,6 +845,22 @@ int Psyz_CdAudioPlaying(void) {
     playing = is_playing;
     Psyz_AudioUnlock();
     return playing;
+}
+
+unsigned long long Psyz_CdAudioFramesPulled(void) {
+    unsigned long long frames;
+    Psyz_AudioLock();
+    frames = cdda_frames_pulled;
+    Psyz_AudioUnlock();
+    return frames;
+}
+
+unsigned long long Psyz_CdAudioEnergy(void) {
+    unsigned long long energy;
+    Psyz_AudioLock();
+    energy = cdda_energy;
+    Psyz_AudioUnlock();
+    return energy;
 }
 
 int Psyz_CdAudioEnded(void) {

@@ -140,6 +140,7 @@ static int spu_voice_pcm_dump_index = -1;
 static unsigned long long reverb_input_energy;
 static unsigned long long reverb_output_energy;
 static unsigned long long reverb_tail_frames;
+static unsigned long long cd_mix_energy;
 
 int Psyz_SpuSetKeyOnTracePath(const char* path) {
     if (spu_key_on_trace) {
@@ -818,8 +819,13 @@ static void spu_tick(short* out) {
 
     // Mix CD audio per SPUCNT and cd_vol registers.
     if (spucnt & SPU_CTRL_MASK_CD_AUDIO_ENABLE) {
-        left_sum += (cd_left * rxx->cd_vol.left) >> 15;
-        right_sum += (cd_right * rxx->cd_vol.right) >> 15;
+        int mixed_cd_left = (cd_left * rxx->cd_vol.left) >> 15;
+        int mixed_cd_right = (cd_right * rxx->cd_vol.right) >> 15;
+        left_sum += mixed_cd_left;
+        right_sum += mixed_cd_right;
+        cd_mix_energy +=
+            (unsigned long long)(mixed_cd_left < 0 ? -mixed_cd_left : mixed_cd_left) +
+            (unsigned long long)(mixed_cd_right < 0 ? -mixed_cd_right : mixed_cd_right);
         if (spucnt & SPU_CTRL_MASK_CD_AUDIO_REVERB) {
             reverb_left += (cd_left * rxx->cd_vol.left) >> 15;
             reverb_right += (cd_right * rxx->cd_vol.right) >> 15;
@@ -863,6 +869,8 @@ void Psyz_SpuPullSamples(short* out, int num_frames) {
 unsigned long long Psyz_SpuReverbInputEnergy(void) {
     return reverb_input_energy;
 }
+
+unsigned long long Psyz_SpuCdMixEnergy(void) { return cd_mix_energy; }
 
 unsigned long long Psyz_SpuReverbOutputEnergy(void) {
     return reverb_output_energy;
