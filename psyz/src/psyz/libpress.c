@@ -182,6 +182,9 @@ static const u_char k_quant_raster[64] = {
     22, 26, 27, 29, 32, 35, 40, 48, 26, 27, 29, 32, 35, 40, 48, 58,
     26, 27, 29, 34, 38, 46, 56, 69, 27, 29, 35, 38, 46, 56, 69, 83};
 
+/* MSVC only declares M_PI when _USE_MATH_DEFINES is set before <math.h>. */
+#define MDEC_PI 3.14159265358979323846
+
 static u_char s_zagzig[64]; /* stream index -> raster position */
 static u_char s_quant_y[64];
 static u_char s_quant_c[64];
@@ -203,7 +206,7 @@ static void MdecInitTables(void) {
     for (x = 0; x < 8; x++)
         for (u = 0; u < 8; u++)
             s_cosine[x][u] = (u == 0 ? sqrt(0.125) : 0.5) *
-                             cos((2.0 * x + 1.0) * u * M_PI / 16.0);
+                             cos((2.0 * x + 1.0) * u * MDEC_PI / 16.0);
     s_tables_ready = 1;
 }
 
