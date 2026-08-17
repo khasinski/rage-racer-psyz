@@ -17,7 +17,7 @@ static void DmaSpu(unsigned offset, u_long value) {
         memAddr = _addr;
         spuAddr = (unsigned)Psyz_SpuRead(0x1A6) << 3;
         if (!(value & 0x300) != 0x200) {
-            WARNF("SyncMode %d is invalid for SPU", (value >> 9) & 3);
+            WARNF("SyncMode %lu is invalid for SPU", (value >> 9) & 3);
             return;
         }
         if (value & 2) { // simulate backward direction

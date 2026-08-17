@@ -160,7 +160,7 @@ int ResetGraph(int mode) {
     switch (mode & 7) {
     case 3:
     case 0:
-        printf("ResetGraph:jtb=%08x,env=%08x\n", &_gpucb, &info);
+        printf("ResetGraph:jtb=%p,env=%p\n", (void*)&_gpucb, (void*)&info);
     case 5:
         memset(&info, 0, sizeof(info));
         ResetCallback();

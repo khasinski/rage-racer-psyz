@@ -1573,6 +1573,47 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
     }
 }
 
+static void Draw_CorrectOpaqueSpriteSamples(const Vertex source[4]) {
+    const Vertex triangles[2][3] = {
+        {source[0], source[1], source[2]},
+        {source[1], source[3], source[2]},
+    };
+    RasterPoint points[2][3];
+    for (int triangle = 0; triangle < 2; triangle++) {
+        for (int vertex = 0; vertex < 3; vertex++) {
+            points[triangle][vertex].x =
+                triangles[triangle][vertex].x + draw_offset.x;
+            points[triangle][vertex].y =
+                triangles[triangle][vertex].y + draw_offset.y;
+        }
+    }
+    const int x0 = source[0].x + draw_offset.x;
+    const int y0 = source[0].y + draw_offset.y;
+    const int x1 = source[3].x + draw_offset.x;
+    const int y1 = source[3].y + draw_offset.y;
+    for (int y = y0; y < y1; y++) {
+        if (y < draw_area_start.y || y > draw_area_end.y ||
+            y < 0 || y >= VRAM_H) continue;
+        for (int x = x0; x < x1; x++) {
+            if (x < draw_area_start.x || x > draw_area_end.x ||
+                x < 0 || x >= VRAM_W) continue;
+            int triangle = ModernTriangleContains(points[1], x, y) ? 1 : 0;
+            bool covered = ModernTriangleContains(points[triangle], x, y);
+            u16 modern_u = 0, modern_v = 0;
+            bool unstable = covered && ModernTextureSample(
+                triangles[triangle], x, y, &modern_u, &modern_v);
+            u16 expected_u = (u16)(source[0].u + x - x0);
+            u16 expected_v = (u16)(source[0].v + y - y0);
+            if (!covered || unstable || TextureSamplesDiffer(
+                    source, expected_u, expected_v, modern_u, modern_v)) {
+                Draw_EnqueueCompatibilityPixel(
+                    source, x, y, true, expected_u, expected_v,
+                    source[0].r, source[0].g, source[0].b);
+            }
+        }
+    }
+}
+
 int Draw_PushPrim(u_long* packets, int max_len) {
     int len = max_len;
     int code = (int)(*packets >> 24) & 0xFF;
@@ -1860,12 +1901,24 @@ int Draw_PushPrim(u_long* packets, int max_len) {
         index_cur[4] = n_vertices + 3;
         index_cur[5] = n_vertices + 2;
         SET_TC_ALL(vertex_cur, tpage, clut);
+        Vertex compatibility_quad[4];
+        bool correct_sprite_uv = isTextured && !(code & SEMITRANSP);
+        if (correct_sprite_uv) {
+            memcpy(compatibility_quad, vertex_cur,
+                   sizeof(compatibility_quad));
+        }
         TraceGpuPrimitive(vertex_cur, 4, code, tpage, clut,
                           draw_offset.x,
                           draw_offset.y - (draw_area_start.y / 240) * 240,
                           draw_area_start.x, draw_area_start.y,
                           draw_area_end.x, draw_area_end.y);
         Draw_EnqueueBuffer(4, 6);
+        /* SPRT samples one texel per destination pixel; host triangle
+         * interpolation can land an integral UV a float ULP below its texel
+         * boundary, most visibly on wide title sprites. */
+        if (correct_sprite_uv) {
+            Draw_CorrectOpaqueSpriteSamples(compatibility_quad);
+        }
     }
     batch_has_texture |= isTextured;
     return max_len - len;

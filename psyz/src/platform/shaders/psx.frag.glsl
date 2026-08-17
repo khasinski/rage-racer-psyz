@@ -20,9 +20,9 @@ uvec2 resolveTexel() {
     // accumulator. Rounding to nearest moves coherent areas onto adjacent
     // palette indices (often transparent/black index zero).
     // Stabilize values which are mathematically integral but arrive a few
-    // float ULPs below the boundary after hardware interpolation. Half of one
-    // 16.16 accumulator unit cannot advance a distinct PS1 fixed-point value.
-    const vec2 fixedHalfUnit = vec2(1.0 / 131072.0);
+    // float ULPs below the boundary after hardware interpolation. One 16.16
+    // accumulator unit cannot skip a distinct PS1 fixed-point value.
+    const vec2 fixedHalfUnit = vec2(1.0 / 65536.0);
     uvec2 texel = uvec2(clamp(floor(rawUV + fixedHalfUnit),
                               vec2(0.0), vec2(255.0)));
     return (texel & texWindow.xy) | texWindow.zw;

@@ -179,7 +179,7 @@ static long GetFirstFreeEvent() {
 }
 long OpenEvent(unsigned long desc, long spec, long mode, long (*func)()) {
     if (!desc) {
-        WARNF("invalid desc %08X", desc);
+        WARNF("invalid desc %08lX", desc);
         return -1;
     }
     long id = GetFirstFreeEvent();
@@ -232,7 +232,8 @@ long OpenEvent(unsigned long desc, long spec, long mode, long (*func)()) {
     }
     if (!supported) {
         e->status = 0;
-        WARNF("unsupported spec:%08X, desc:%04X, mode:%04X", spec, desc, mode);
+        WARNF("unsupported spec:%08lX, desc:%04lX, mode:%04lX",
+              (unsigned long)spec, desc, (unsigned long)mode);
     }
     event_first_empty = id + 1;
     // Wrap around if event_first_empty is beyond array bounds
@@ -243,7 +244,7 @@ long OpenEvent(unsigned long desc, long spec, long mode, long (*func)()) {
 }
 long CloseEvent(unsigned long event) {
     if (event >= LEN(events)) {
-        WARNF("invalid event ID %d", event);
+        WARNF("invalid event ID %lu", event);
         return 0;
     }
     events[event].desc = 0;
@@ -252,7 +253,7 @@ long CloseEvent(unsigned long event) {
 }
 long WaitEvent(unsigned long event) {
     if (event >= LEN(events)) {
-        WARNF("invalid event ID %d", event);
+        WARNF("invalid event ID %lu", event);
         return 0;
     }
     // never waits
@@ -260,7 +261,7 @@ long WaitEvent(unsigned long event) {
 }
 long EnableEvent(unsigned long event) {
     if (event >= LEN(events)) {
-        WARNF("invalid event ID %d", event);
+        WARNF("invalid event ID %lu", event);
         return 0;
     }
     NOT_IMPLEMENTED;
@@ -268,7 +269,7 @@ long EnableEvent(unsigned long event) {
 }
 long DisableEvent(unsigned long event) {
     if (event >= LEN(events)) {
-        WARNF("invalid event ID %d", event);
+        WARNF("invalid event ID %lu", event);
         return 0;
     }
     NOT_IMPLEMENTED;
@@ -276,7 +277,7 @@ long DisableEvent(unsigned long event) {
 }
 long TestEvent(unsigned long event) {
     if (event >= LEN(events)) {
-        WARNF("invalid event ID %d", event);
+        WARNF("invalid event ID %lu", event);
         return 0;
     }
     return events[event].status;
@@ -291,7 +292,7 @@ void UnDeliverEvent(unsigned ev1, unsigned ev2) { NOT_IMPLEMENTED; }
 
 void SystemError(char c, long n) {
     NOT_IMPLEMENTED;
-    ERRORF("SystemError('%c', 0x%X)", c, n);
+    ERRORF("SystemError('%c', 0x%lX)", c, (unsigned long)n);
 }
 
 struct DIRENTRY* my_firstfile(char* dirPath, struct DIRENTRY* firstEntry);

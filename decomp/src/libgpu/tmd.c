@@ -70,10 +70,10 @@ int get_tim_addr(unsigned int* timaddr, TIM_IMAGE* img) {
         printf("id  =%08x\n", 0x10);
     }
     if (GetGraphDebug() == 2) {
-        printf("mode=%08x\n", img->mode);
+        printf("mode=%08lx\n", img->mode);
     }
     if (GetGraphDebug() == 2) {
-        printf("timaddr=%08x\n", timaddr);
+        printf("timaddr=%p\n", (void*)timaddr);
     }
     if (img->mode & 8) {
         clut_len = *timaddr >> 2;
