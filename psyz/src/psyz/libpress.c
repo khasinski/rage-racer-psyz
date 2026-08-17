@@ -353,6 +353,7 @@ int DecDCTvlc(u_long* bs, u_long* buf) {
     const u_char* bytes = (const u_char*)bs;
     u_short* out;
     u_short quant;
+    u_short words;
     int count;
     int capacity;
 
@@ -365,11 +366,12 @@ int DecDCTvlc(u_long* bs, u_long* buf) {
 
     out = (u_short*)buf;
     quant = (u_short)(bytes[4] | (bytes[5] << 8));
-    out[0] = (u_short)(bytes[0] | (bytes[1] << 8));
+    words = (u_short)(bytes[0] | (bytes[1] << 8));
+    out[0] = words;
     out[1] = (u_short)(bytes[2] | (bytes[3] << 8));
 
     capacity = s_vlc_limit > 0 ? s_vlc_limit * 2 : MDEC_MAX_CODES;
-    BsInit(&reader, bytes + 8, out[0] * 4);
+    BsInit(&reader, bytes + 8, words * 4);
     count = 0;
     for (;;) {
         int block;
@@ -380,6 +382,11 @@ int DecDCTvlc(u_long* bs, u_long* buf) {
                  * transfer the caller is about to issue. */
                 if (count & 1)
                     out[2 + count++] = MDEC_EOB;
+                /* Report what was actually decoded. The header's count is an
+                 * upper bound the bitstream does not always reach, and a
+                 * caller that trusts it decodes whatever the buffer happened
+                 * to hold from the frame before. */
+                out[0] = (u_short)(count / 2);
                 return 0;
             }
             if (count + 8 >= capacity)
