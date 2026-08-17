@@ -19,6 +19,10 @@
 #include "shaders/psx_frag_msl.h"
 #include "shaders/clear_vert_msl.h"
 #include "shaders/clear_frag_msl.h"
+#include "shaders/present_vert_spv.h"
+#include "shaders/present_frag_spv.h"
+#include "shaders/present_vert_msl.h"
+#include "shaders/present_frag_msl.h"
 
 typedef struct {
     int x, y;
@@ -31,6 +35,8 @@ static bool swapchain_ok = false;
 static SDL_GPUTexture* vram_render = NULL;
 static SDL_GPUTexture* vram_sample = NULL;
 static SDL_GPUSampler* vram_sampler = NULL;
+static SDL_GPUSampler* present_nearest_sampler = NULL;
+static SDL_GPUSampler* present_linear_sampler = NULL;
 static SDL_GPUTexture* scaled_vram_render = NULL;
 static unsigned internal_res = 1;
 static unsigned set_internal_res = 1;
@@ -43,6 +49,7 @@ static SDL_GPUTransferBuffer* tex_download_transfer = NULL;
 static SDL_GPUGraphicsPipeline* pipe_tri_add = NULL;
 static SDL_GPUGraphicsPipeline* pipe_tri_sub = NULL;
 static SDL_GPUGraphicsPipeline* pipe_clear = NULL;
+static SDL_GPUGraphicsPipeline* pipe_present = NULL;
 static SDL_GPUCommandBuffer* pending_cmd = NULL;
 
 static Posi display_area = {0, 0};
@@ -257,6 +264,28 @@ static SDL_GPUGraphicsPipeline* CreateClearPipeline(
     return pipe;
 }
 
+static SDL_GPUGraphicsPipeline* CreatePresentPipeline(
+    SDL_GPUShader* vs, SDL_GPUShader* fs) {
+    const SDL_GPUColorTargetDescription target = {
+        .format = SDL_GetGPUSwapchainTextureFormat(device, sdl3_window),
+    };
+    const SDL_GPUGraphicsPipelineCreateInfo info = {
+        .vertex_shader = vs,
+        .fragment_shader = fs,
+        .primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
+        .target_info = {
+            .color_target_descriptions = &target,
+            .num_color_targets = 1,
+        },
+    };
+    SDL_GPUGraphicsPipeline* pipe =
+        SDL_CreateGPUGraphicsPipeline(device, &info);
+    if (!pipe) {
+        ERRORF("SDL_CreateGPUGraphicsPipeline (present): %s", SDL_GetError());
+    }
+    return pipe;
+}
+
 static bool CreateGpuResources(void) {
     const SDL_GPUTextureCreateInfo render_info = {
         .type = SDL_GPU_TEXTURETYPE_2D,
@@ -286,7 +315,13 @@ static bool CreateGpuResources(void) {
         .address_mode_w = SDL_GPU_SAMPLERADDRESSMODE_CLAMP_TO_EDGE,
     };
     vram_sampler = SDL_CreateGPUSampler(device, &sampler_info);
-    if (!vram_sampler) {
+    present_nearest_sampler = SDL_CreateGPUSampler(device, &sampler_info);
+    SDL_GPUSamplerCreateInfo linear_sampler_info = sampler_info;
+    linear_sampler_info.min_filter = SDL_GPU_FILTER_LINEAR;
+    linear_sampler_info.mag_filter = SDL_GPU_FILTER_LINEAR;
+    present_linear_sampler =
+        SDL_CreateGPUSampler(device, &linear_sampler_info);
+    if (!vram_sampler || !present_nearest_sampler || !present_linear_sampler) {
         ERRORF("SDL_CreateGPUSampler: %s", SDL_GetError());
         return false;
     }
@@ -381,11 +416,21 @@ static bool CreateGpuResources(void) {
     SDL_GPUShader* clear_fs =
         CreateShader(clear_frag_spv, clear_frag_spv_len, clear_frag_msl,
                      clear_frag_msl_len, SDL_GPU_SHADERSTAGE_FRAGMENT, 0, 0);
-    bool shaders_ok = psx_vs && psx_fs && clear_vs && clear_fs;
+    SDL_GPUShader* present_vs =
+        CreateShader(present_vert_spv, present_vert_spv_len, present_vert_msl,
+                     present_vert_msl_len, SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
+    SDL_GPUShader* present_fs =
+        CreateShader(present_frag_spv, present_frag_spv_len, present_frag_msl,
+                     present_frag_msl_len, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
+    bool shaders_ok = psx_vs && psx_fs && clear_vs && clear_fs &&
+                      present_vs && present_fs;
     if (shaders_ok) {
         pipe_tri_add = CreatePsxPipeline(psx_vs, psx_fs, false);
         pipe_tri_sub = CreatePsxPipeline(psx_vs, psx_fs, true);
         pipe_clear = CreateClearPipeline(clear_vs, clear_fs);
+        if (swapchain_ok) {
+            pipe_present = CreatePresentPipeline(present_vs, present_fs);
+        }
     }
     if (psx_vs) {
         SDL_ReleaseGPUShader(device, psx_vs);
@@ -399,7 +444,14 @@ static bool CreateGpuResources(void) {
     if (clear_fs) {
         SDL_ReleaseGPUShader(device, clear_fs);
     }
-    return shaders_ok && pipe_tri_add && pipe_tri_sub && pipe_clear;
+    if (present_vs) {
+        SDL_ReleaseGPUShader(device, present_vs);
+    }
+    if (present_fs) {
+        SDL_ReleaseGPUShader(device, present_fs);
+    }
+    return shaders_ok && pipe_tri_add && pipe_tri_sub && pipe_clear &&
+           (!swapchain_ok || pipe_present);
 }
 
 bool InitPlatform() {
@@ -679,6 +731,8 @@ static void PlatformBackend_Present(void) {
                 .w = (Uint32)display_size.x * n,
                 .h = (Uint32)display_size.y * n,
             };
+            Uint32 source_w = VRAM_W * n;
+            Uint32 source_h = VRAM_H * n;
             float game_aspect =
                 GetCurrentGameAspectRatio(display_size.x, display_size.y);
             SDL_GPUFilter present_filter = SDL_GPU_FILTER_NEAREST;
@@ -698,6 +752,8 @@ static void PlatformBackend_Present(void) {
                     src.y = 0;
                     src.w = info.w;
                     src.h = info.h;
+                    source_w = info.w;
+                    source_h = info.h;
                     game_aspect = info.aspect > 0.0f
                                       ? info.aspect
                                       : (float)info.w / (float)info.h;
@@ -708,35 +764,43 @@ static void PlatformBackend_Present(void) {
             WndSize win = {(int)sc_w, (int)sc_h};
             SDL_Rect dst = FitGameToWindow(game_aspect, win);
 
-            const SDL_GPUBlitInfo blit = {
-                .source = src,
-                .destination =
-                    {
-                        .texture = swapchain,
-                        .x = (Uint32)dst.x,
-                        .y = (Uint32)dst.y,
-                        .w = (Uint32)dst.w,
-                        .h = (Uint32)dst.h,
-                    },
-                // clear the swapchain to black first so the horizontal or
-                // vertical bars around the game output are black
-                .load_op = SDL_GPU_LOADOP_CLEAR,
+            const SDL_GPUColorTargetInfo target = {
+                .texture = swapchain,
                 .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
-                .filter = present_filter,
+                .load_op = SDL_GPU_LOADOP_CLEAR,
+                .store_op = SDL_GPU_STOREOP_STORE,
             };
+            SDL_GPURenderPass* pass =
+                SDL_BeginGPURenderPass(cmd, &target, 1, NULL);
             if (disp_on) {
-                SDL_BlitGPUTexture(cmd, &blit);
-            } else {
-                const SDL_GPUColorTargetInfo target = {
-                    .texture = swapchain,
-                    .clear_color = {0.0f, 0.0f, 0.0f, 1.0f},
-                    .load_op = SDL_GPU_LOADOP_CLEAR,
-                    .store_op = SDL_GPU_STOREOP_STORE,
+                const SDL_GPUViewport viewport = {
+                    .x = (float)dst.x,
+                    .y = (float)dst.y,
+                    .w = (float)dst.w,
+                    .h = (float)dst.h,
+                    .min_depth = 0.0f,
+                    .max_depth = 1.0f,
                 };
-                SDL_GPURenderPass* pass =
-                    SDL_BeginGPURenderPass(cmd, &target, 1, NULL);
-                SDL_EndGPURenderPass(pass);
+                const float uv_rect[4] = {
+                    (float)src.x / (float)source_w,
+                    (float)src.y / (float)source_h,
+                    (float)src.w / (float)source_w,
+                    (float)src.h / (float)source_h,
+                };
+                const SDL_GPUTextureSamplerBinding binding = {
+                    .texture = src.texture,
+                    .sampler = present_filter == SDL_GPU_FILTER_LINEAR
+                                   ? present_linear_sampler
+                                   : present_nearest_sampler,
+                };
+                SDL_BindGPUGraphicsPipeline(pass, pipe_present);
+                SDL_SetGPUViewport(pass, &viewport);
+                SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+                SDL_PushGPUFragmentUniformData(
+                    cmd, 0, uv_rect, sizeof(uv_rect));
+                SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
             }
+            SDL_EndGPURenderPass(pass);
             if (overlay_frame_cb) {
                 overlay_frame_cb();
             }
@@ -777,6 +841,10 @@ static void QuitPlatform(void) {
             SDL_ReleaseGPUGraphicsPipeline(device, pipe_clear);
             pipe_clear = NULL;
         }
+        if (pipe_present) {
+            SDL_ReleaseGPUGraphicsPipeline(device, pipe_present);
+            pipe_present = NULL;
+        }
         if (vram_render) {
             SDL_ReleaseGPUTexture(device, vram_render);
             vram_render = NULL;
@@ -792,6 +860,14 @@ static void QuitPlatform(void) {
         if (vram_sampler) {
             SDL_ReleaseGPUSampler(device, vram_sampler);
             vram_sampler = NULL;
+        }
+        if (present_nearest_sampler) {
+            SDL_ReleaseGPUSampler(device, present_nearest_sampler);
+            present_nearest_sampler = NULL;
+        }
+        if (present_linear_sampler) {
+            SDL_ReleaseGPUSampler(device, present_linear_sampler);
+            present_linear_sampler = NULL;
         }
         if (vbuf) {
             SDL_ReleaseGPUBuffer(device, vbuf);

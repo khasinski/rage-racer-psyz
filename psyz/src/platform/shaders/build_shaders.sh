@@ -21,7 +21,7 @@ emit_header() {
     } > "${name}_${suffix}.h"
 }
 
-for shader in psx.vert psx.frag clear.vert clear.frag; do
+for shader in psx.vert psx.frag clear.vert clear.frag present.vert present.frag; do
     name=$(echo "$shader" | tr . _)
     stage=${shader##*.}
     glslangValidator -V --target-env vulkan1.0 -S "$stage" \
