@@ -1095,12 +1095,6 @@ int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
     MarkVramDirty((SDL_Rect){0, 240 + y_offset, w, h});
     SyncNativeVramToScaled(0, y_offset, w, h);
     SyncNativeVramToScaled(0, 240 + y_offset, w, h);
-    /* FMV frames reuse the same upload buffer and VRAM destinations. Some
-     * Vulkan drivers expose the next CPU write before the preceding texture
-     * copies have consumed it, even though the transfer buffer was mapped
-     * with cycling enabled. FMV is only 30 FPS, so finish this isolated
-     * transfer before the decoder hands us another frame. */
-    SubmitCmdAndWait();
     return 1;
 }
 

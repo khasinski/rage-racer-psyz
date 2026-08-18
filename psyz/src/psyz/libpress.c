@@ -100,6 +100,13 @@ static u_short AcValue(u_short base, u_long negate) {
     return (u_short)((run << 10) | ((u_long)(-level) & 0x3FF));
 }
 
+static u_short BsReadAcTable(BsReader* reader, const u_short* table,
+                             int index_bits) {
+    u_long index = BsRead(reader, index_bits);
+    u_long negate = BsRead(reader, 1);
+    return AcValue(table[index], negate);
+}
+
 /* Returns 0 for a coefficient, 1 for end-of-block, -1 on an invalid code. */
 static int BsDecodeAc(BsReader* reader, u_short* out) {
     int zeros = 0;
@@ -120,46 +127,45 @@ static int BsDecodeAc(BsReader* reader, u_short* out) {
             *out = AcValue(0x0401, BsRead(reader, 1));
             return 0;
         }
-        *out = AcValue(k_ac_zero1_low[BsRead(reader, 1)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero1_low, 1);
         return 0;
     case 2:
         if (BsRead(reader, 1)) {
-            *out = AcValue(k_ac_zero2_high[BsRead(reader, 1)],
-                           BsRead(reader, 1));
+            *out = BsReadAcTable(reader, k_ac_zero2_high, 1);
             return 0;
         }
         if (BsRead(reader, 1)) {
             *out = AcValue(0x0003, BsRead(reader, 1));
             return 0;
         }
-        *out = AcValue(k_ac_zero2_low[BsRead(reader, 3)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero2_low, 3);
         return 0;
     case 3:
-        *out = AcValue(k_ac_zero3[BsRead(reader, 2)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero3, 2);
         return 0;
     case 4:
-        *out = AcValue(k_ac_zero4[BsRead(reader, 2)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero4, 2);
         return 0;
     case 5:
         *out = (u_short)BsRead(reader, 16); /* escape: raw MDEC value */
         return 0;
     case 6:
-        *out = AcValue(k_ac_zero6[BsRead(reader, 3)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero6, 3);
         return 0;
     case 7:
-        *out = AcValue(k_ac_zero7[BsRead(reader, 4)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero7, 4);
         return 0;
     case 8:
-        *out = AcValue(k_ac_zero8[BsRead(reader, 4)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero8, 4);
         return 0;
     case 9:
-        *out = AcValue(k_ac_zero9[BsRead(reader, 4)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero9, 4);
         return 0;
     case 10:
-        *out = AcValue(k_ac_zero10[BsRead(reader, 4)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero10, 4);
         return 0;
     default:
-        *out = AcValue(k_ac_zero11[BsRead(reader, 4)], BsRead(reader, 1));
+        *out = BsReadAcTable(reader, k_ac_zero11, 4);
         return 0;
     }
 }
