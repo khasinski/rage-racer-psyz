@@ -45,6 +45,17 @@ typedef void (*PsyzVramWriteCB_SDL3GPU)(int x, int y, int w, int h);
 PsyzVramWriteCB_SDL3GPU Psyz_VideoObserveVramWrites_SDL3GPU(
     PsyzVramWriteCB_SDL3GPU cb);
 
+// Read back one region of VRAM as RGBA8888, w*h*4 bytes into out. Meant for
+// decoding texture pages into host-side materials: a ray that hits a triangle
+// cannot afford the CLUT indirection the rasterizer does per fragment.
+//
+// This stalls on the GPU, so it is for occasional use — texture pages are
+// written when assets load and then stay put, which is what makes caching
+// their decoded form worthwhile. Returns false when the region is out of
+// bounds or the device is not up.
+bool Psyz_VideoDownloadVramRegion_SDL3GPU(int x, int y, int w, int h,
+                                          void* out);
+
 #ifdef __cplusplus
 }
 #endif

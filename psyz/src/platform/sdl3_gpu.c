@@ -954,6 +954,16 @@ unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h) {
     return pixels;
 }
 
+bool Psyz_VideoDownloadVramRegion_SDL3GPU(int x, int y, int w, int h,
+                                          void* out) {
+    if (!device || !vram_render || out == NULL || w <= 0 || h <= 0 ||
+        x < 0 || y < 0 || x + w > VRAM_W || y + h > VRAM_H) {
+        return false;
+    }
+    Draw_FlushBuffer();
+    return DownloadVramRegionAsRGBA8888(x, y, w, h, (u8*)out);
+}
+
 unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h) {
     size_t pixels;
     u8* rgba;
