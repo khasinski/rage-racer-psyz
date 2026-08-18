@@ -475,6 +475,15 @@ static SDL_GPUTexture* GetRenderTarget(void) {
 }
 
 static SDL_Rect vram_dirty = {0, 0, 0, 0};
+static PsyzVramWriteCB_SDL3GPU vram_write_observer;
+
+PsyzVramWriteCB_SDL3GPU Psyz_VideoObserveVramWrites_SDL3GPU(
+    PsyzVramWriteCB_SDL3GPU cb) {
+    PsyzVramWriteCB_SDL3GPU previous = vram_write_observer;
+    vram_write_observer = cb;
+    return previous;
+}
+
 static void MarkVramDirty(SDL_Rect r) {
     if (r.w <= 0 || r.h <= 0) {
         return;
@@ -485,6 +494,9 @@ static void MarkVramDirty(SDL_Rect r) {
     int y1 = CLAMP(r.y + r.h, 0, VRAM_H);
     if (x1 <= x0 || y1 <= y0) {
         return;
+    }
+    if (vram_write_observer != NULL) {
+        vram_write_observer(x0, y0, x1 - x0, y1 - y0);
     }
     if (vram_dirty.w <= 0 || vram_dirty.h <= 0) {
         vram_dirty = (SDL_Rect){x0, y0, x1 - x0, y1 - y0};

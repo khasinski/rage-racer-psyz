@@ -33,6 +33,18 @@ PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
 // present; sample it only from work submitted before the current one.
 SDL_GPUTexture* Psyz_VideoGetVramTexture_SDL3GPU(void);
 
+// Observe VRAM writes, in native PS1 pixel coordinates. A host renderer that
+// caches decoded textures needs to know which regions stopped being valid,
+// and cannot read the internal dirty rectangle without racing the reset that
+// follows each sync.
+//
+// The callback runs inside the write path: keep it cheap and do not call back
+// into the video API from it. Pass NULL to stop observing. Returns the
+// previous observer.
+typedef void (*PsyzVramWriteCB_SDL3GPU)(int x, int y, int w, int h);
+PsyzVramWriteCB_SDL3GPU Psyz_VideoObserveVramWrites_SDL3GPU(
+    PsyzVramWriteCB_SDL3GPU cb);
+
 #ifdef __cplusplus
 }
 #endif
