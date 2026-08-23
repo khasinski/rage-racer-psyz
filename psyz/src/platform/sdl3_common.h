@@ -473,6 +473,27 @@ struct Gamepad {
 };
 static bool is_pads_init = false;
 static struct Gamepad gamepads[16] = {0};
+/* PS1 games normally only read pad port 0.  Handheld PCs frequently expose
+ * their built-in controls before a docked wireless controller, so binding
+ * that port permanently to gamepads[0] makes the controller the player is
+ * actually using invisible.  Keep one active host pad and switch to a pad as
+ * soon as it produces input. */
+static int active_gamepad = -1;
+
+static struct Gamepad* ActiveGamepad(void) {
+    if (active_gamepad >= 0 && active_gamepad < LEN(gamepads) &&
+        gamepads[active_gamepad].dev) {
+        return &gamepads[active_gamepad];
+    }
+    for (int i = 0; i < LEN(gamepads); i++) {
+        if (gamepads[i].dev) {
+            active_gamepad = i;
+            return &gamepads[i];
+        }
+    }
+    active_gamepad = -1;
+    return NULL;
+}
 static void AddGamepad(SDL_JoystickID id) {
     int i;
     for (i = 0; i < LEN(gamepads); i++) {
@@ -491,6 +512,7 @@ static void AddGamepad(SDL_JoystickID id) {
         gamepads[i].id = id;
         gamepads[i].dev = dev;
         gamepads[i].name = SDL_GetGamepadName(dev);
+        if (active_gamepad < 0) active_gamepad = i;
         INFOF("connected %s", gamepads[i].name);
     }
 }
@@ -507,6 +529,7 @@ static void RemoveGamepad(SDL_JoystickID id) {
     } else {
         SDL_CloseGamepad(gamepads[i].dev);
         gamepads[i] = (struct Gamepad){0};
+        if (active_gamepad == i) active_gamepad = -1;
     }
 }
 
@@ -648,6 +671,30 @@ static unsigned int PadRead_Gamepad(struct Gamepad* g) {
     return r;
 }
 
+static int GamepadHasInput(struct Gamepad* g) {
+    const int deadzone = 8000;
+    if (!g || !g->dev) return 0;
+    if (PadRead_Gamepad(g) != 0) return 1;
+    return abs(SDL_GetGamepadAxis(g->dev, SDL_GAMEPAD_AXIS_LEFTX)) > deadzone ||
+           abs(SDL_GetGamepadAxis(g->dev, SDL_GAMEPAD_AXIS_LEFTY)) > deadzone ||
+           abs(SDL_GetGamepadAxis(g->dev, SDL_GAMEPAD_AXIS_RIGHTX)) > deadzone ||
+           abs(SDL_GetGamepadAxis(g->dev, SDL_GAMEPAD_AXIS_RIGHTY)) > deadzone;
+}
+
+static struct Gamepad* GamepadForPort(int port) {
+    int i;
+    if (port != 0) {
+        return port >= 0 && port < LEN(gamepads) ? &gamepads[port] : NULL;
+    }
+    for (i = 0; i < LEN(gamepads); i++) {
+        if (GamepadHasInput(&gamepads[i])) {
+            active_gamepad = i;
+            break;
+        }
+    }
+    return ActiveGamepad();
+}
+
 static unsigned int SinglePadRead(int id) {
     if (!is_pads_init) {
         WARNF("PadInit not called");
@@ -665,7 +712,7 @@ static unsigned int SinglePadRead(int id) {
     if (id == 0) {
         pressed |= PadRead_Keyboard(keyb_p1, LEN(keyb_p1));
     }
-    return pressed | PadRead_Gamepad(&gamepads[id]);
+    return pressed | PadRead_Gamepad(GamepadForPort(id));
 }
 
 static unsigned char AxisToByte(short v) {
@@ -683,7 +730,7 @@ static bool PortHasHostInput(int port) {
     if (port < 0 || port >= LEN(gamepads)) {
         return false;
     }
-    if (gamepads[port].dev) {
+    if (GamepadForPort(port) != NULL && GamepadForPort(port)->dev) {
         return true;
     }
     if (port == 0) {
@@ -720,12 +767,15 @@ static void BuildPadFrame(int port, PsyzControllerKind kind, char* buf) {
             break;
         }
         unsigned char rx = 0x80, ry = 0x80, lx = 0x80, ly = 0x80;
-        if (gamepads[port].dev) {
-            SDL_Gamepad* d = gamepads[port].dev;
+        {
+            struct Gamepad* gamepad = GamepadForPort(port);
+            if (gamepad != NULL && gamepad->dev) {
+                SDL_Gamepad* d = gamepad->dev;
             rx = AxisToByte(SDL_GetGamepadAxis(d, SDL_GAMEPAD_AXIS_RIGHTX));
             ry = AxisToByte(SDL_GetGamepadAxis(d, SDL_GAMEPAD_AXIS_RIGHTY));
             lx = AxisToByte(SDL_GetGamepadAxis(d, SDL_GAMEPAD_AXIS_LEFTX));
             ly = AxisToByte(SDL_GetGamepadAxis(d, SDL_GAMEPAD_AXIS_LEFTY));
+            }
         }
         buf[4] = (char)rx;
         buf[5] = (char)ry;
