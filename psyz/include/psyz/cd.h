@@ -40,6 +40,14 @@ int Psyz_CdSetDiskPath(const char* diskPath);
 int Psyz_CdGetTrackSector(int track);
 
 /**
+ * Limit XA streaming to sectors before an absolute disc sector.
+ *
+ * Pass a negative value to remove the limit. The limit is exclusive and only
+ * affects CdlReadN/CdlReadS XA playback; ordinary CD-DA playback is unchanged.
+ */
+void Psyz_CdSetXaEndSector(int sector);
+
+/**
  * @brief Simulate CD-ROM drive shell (lid) opening or closing
  *
  * @param is_open Non-zero to open the shell, zero to close it

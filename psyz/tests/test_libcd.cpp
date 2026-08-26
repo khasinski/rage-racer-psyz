@@ -615,4 +615,33 @@ TEST_F(LibCdPlaybackTest, xa_playback) {
     }
 }
 
+TEST_F(LibCdPlaybackTest, xa_playback_stops_at_exclusive_sector_limit) {
+    constexpr int kSectors = 4;
+    constexpr int kLimit = 2;
+    std::vector<unsigned short> sample(kSectors * 2352 / 2, 0);
+    auto* raw = reinterpret_cast<unsigned char*>(sample.data());
+    for (int i = 0; i < kSectors; i++) {
+        build_xa_sector(raw + i * 2352, i);
+    }
+    mount_bin_cue_pair(sample, "MODE2/2352");
+
+    CdReset(1);
+    u_char mode = CdlModeSpeed | CdlModeRT | CdlModeSF;
+    CdControlB(CdlSetmode, &mode, nullptr);
+    u_char filter[2] = {1, 0};
+    CdControlB(CdlSetfilter, filter, nullptr);
+    CdlLOC loc = {};
+    CdIntToPos(0, &loc);
+    CdControl(CdlSetloc, reinterpret_cast<u_char*>(&loc), nullptr);
+    Psyz_CdSetXaEndSector(kLimit);
+    Psyz_AudioPause();
+    CdControl(CdlReadN, nullptr, nullptr);
+
+    std::vector<short> out(10000 * 2, 0);
+    const size_t frames = Psyz_CdPullSamples(out.data(), 10000);
+    EXPECT_EQ(frames, 4705u);
+    EXPECT_EQ(Psyz_CdAudioPlaying(), 0);
+    Psyz_CdSetXaEndSector(-1);
+}
+
 } // namespace

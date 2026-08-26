@@ -397,6 +397,7 @@ static int is_muted = 0;   // return empty samples while CD keeps streaming
 static int cdda_ended = 0;  // physical EOF, distinct from pause or data reads
 static unsigned long long cdda_frames_pulled = 0;
 static unsigned long long cdda_energy = 0;
+static int xa_end_abs_sector = -1;
 
 // CD audio pull callback — called by SPU when its internal ring buffer
 // runs low. Fills `buf` with up to `max_frames` interleaved stereo frames.
@@ -568,6 +569,10 @@ static int xa_decode_user_mono_4bit(const unsigned char* user) {
 static int xa_read_and_decode_sector(void) {
     unsigned char sector[SECTOR_SIZE];
     while (1) {
+        if (xa_end_abs_sector >= 0 &&
+            xa.cur_abs_sector + 1 >= xa_end_abs_sector) {
+            return 0;
+        }
         const size_t n = fread(sector, 1, SECTOR_SIZE, track_file);
         if (n != SECTOR_SIZE) {
             return 0; // EOF or short read
@@ -598,6 +603,12 @@ static int xa_read_and_decode_sector(void) {
         xa.decoded_pos = 0;
         return 1;
     }
+}
+
+void Psyz_CdSetXaEndSector(int sector) {
+    Psyz_AudioLock();
+    xa_end_abs_sector = sector;
+    Psyz_AudioUnlock();
 }
 
 // Pull next 37800 Hz stereo input frame into the Hermite ring buffers.
