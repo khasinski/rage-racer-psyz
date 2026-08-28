@@ -36,6 +36,21 @@ typedef int (*PsyzCdReadCB)(struct PsyzCdRead* read);
  */
 int Psyz_CdSetDiskPath(const char* diskPath);
 
+typedef struct PsyzCdTrackInfo {
+    int sector;      /**< absolute INDEX 01 sector, excluding lead-in */
+    int end_sector;  /**< first sector after recorded track data */
+    int is_audio;
+    int audio_big_endian;
+} PsyzCdTrackInfo;
+
+typedef int (*PsyzCdSectorReadCB)(unsigned int sector, void* buffer,
+                                  void* user);
+
+/** Install a virtual raw-sector disc, used by compressed-image frontends. */
+int Psyz_CdSetSectorBackend(const PsyzCdTrackInfo* tracks, int track_count,
+                            int lead_out_sector, PsyzCdSectorReadCB read_cb,
+                            void* user);
+
 /** Return the absolute INDEX 01 sector for a one-based CUE track. */
 int Psyz_CdGetTrackSector(int track);
 

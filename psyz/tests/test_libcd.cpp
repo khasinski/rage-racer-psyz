@@ -558,6 +558,48 @@ TEST_F(LibCdPlaybackTest, cdda_getlocp_advances_and_pause_stops_playback) {
     EXPECT_EQ(Psyz_CdPullSamples(out.data(), 588), 0u);
 }
 
+static int read_virtual_big_endian_audio(unsigned int sector, void* buffer,
+                                         void* user) {
+    unsigned char* bytes = static_cast<unsigned char*>(buffer);
+    unsigned int* last_sector = static_cast<unsigned int*>(user);
+    *last_sector = sector;
+    for (int i = 0; i < SECTOR_SIZE; i += 2) {
+        bytes[i] = 0x12;
+        bytes[i + 1] = 0x34;
+    }
+    return SECTOR_SIZE;
+}
+
+TEST_F(LibCdPlaybackTest, virtual_sector_backend_streams_big_endian_cdda) {
+    PsyzCdTrackInfo tracks[2] = {
+        {0, 300, 0, 0},
+        {300, 302, 1, 1},
+    };
+    unsigned int last_sector = 0;
+    ASSERT_EQ(Psyz_CdSetSectorBackend(tracks, 2, 302,
+                                      read_virtual_big_endian_audio,
+                                      &last_sector), 0);
+    EXPECT_EQ(Psyz_CdGetTrackSector(1), 0);
+    EXPECT_EQ(Psyz_CdGetTrackSector(2), 300);
+
+    CdReset(1);
+    u_char mode = CdlModeDA;
+    CdControl(CdlSetmode, &mode, nullptr);
+    CdlLOC loc = {};
+    CdIntToPos(300, &loc);
+    CdControl(CdlSetloc, reinterpret_cast<u_char*>(&loc), nullptr);
+    Psyz_AudioPause();
+    CdControl(CdlPlay, nullptr, nullptr);
+
+    std::vector<short> out(588 * 2, 0);
+    ASSERT_EQ(Psyz_CdPullSamples(out.data(), 588), 588u);
+    EXPECT_EQ(last_sector, 301u);
+    EXPECT_EQ(out.front(), 0x1234);
+    EXPECT_EQ(out.back(), 0x1234);
+    EXPECT_EQ(Psyz_CdPullSamples(out.data(), 588), 588u);
+    EXPECT_EQ(Psyz_CdPullSamples(out.data(), 1), 0u);
+}
+
 TEST_F(LibCdPlaybackTest, xa_playback) {
     // Each MODE2/2352 XA Form2 sector decodes to 18*4*28 = 2016 stereo frames
     // at 37800 Hz, which yields 2016 * 44100/37800 = 2352 output frames at

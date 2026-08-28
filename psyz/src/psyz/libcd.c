@@ -31,6 +31,8 @@ typedef struct {
     int track_num;
     TrackType type;
     int is_valid;
+    int end_sector;
+    int audio_big_endian;
 } TrackEntry;
 
 // https://www.problemkaputt.de/psx-spx.htm#cdromcontrollerioports
@@ -50,6 +52,9 @@ typedef struct {
 static TrackEntry g_tracks[MAX_TRACKS];
 static int g_track_count = 0;
 static char g_cue_base_path[MAX_PATH_LEN];
+static PsyzCdSectorReadCB g_sector_read_cb;
+static void* g_sector_read_user;
+static int g_backend_lead_out;
 
 char* CD_comstr[] = {
     "CdlSync",    "CdlNop",
@@ -335,6 +340,9 @@ static int is_disk_loaded = 0;
 // Compute the absolute sector of the disc lead-out, used by CdlGetTD with
 // param = 0x00. Equals the absolute sector where the last track's file ends.
 static int lead_out_sector(void) {
+    if (g_sector_read_cb) {
+        return g_backend_lead_out;
+    }
     if (g_track_count == 0) {
         return 0;
     }
@@ -359,6 +367,9 @@ int Psyz_CdSetDiskPath(const char* diskPath) {
     is_disk_loaded = 0;
     g_track_count = 0;
     memset(g_tracks, 0, sizeof(g_tracks));
+    g_sector_read_cb = NULL;
+    g_sector_read_user = NULL;
+    g_backend_lead_out = 0;
     if (!diskPath) {
         DEBUGF("Disk path unset");
         return 0;
@@ -368,6 +379,44 @@ int Psyz_CdSetDiskPath(const char* diskPath) {
     }
     is_disk_loaded = 1;
     DEBUGF("Disk path set: %s", diskPath);
+    return 0;
+}
+
+int Psyz_CdSetSectorBackend(const PsyzCdTrackInfo* tracks, int track_count,
+                            int lead_out, PsyzCdSectorReadCB read_cb,
+                            void* user) {
+    int index;
+    is_disk_loaded = 0;
+    g_track_count = 0;
+    memset(g_tracks, 0, sizeof(g_tracks));
+    g_sector_read_cb = NULL;
+    g_sector_read_user = NULL;
+    g_backend_lead_out = 0;
+    if (!tracks || track_count < 1 || track_count > MAX_TRACKS ||
+        lead_out <= 0 || !read_cb) {
+        return -1;
+    }
+    for (index = 0; index < track_count; index++) {
+        TrackEntry* dst = &g_tracks[index];
+        if (tracks[index].sector < 0 ||
+            tracks[index].end_sector <= tracks[index].sector ||
+            (index > 0 && tracks[index].sector < tracks[index - 1].sector)) {
+            memset(g_tracks, 0, sizeof(g_tracks));
+            return -1;
+        }
+        dst->track_num = index + 1;
+        dst->abs_sector = tracks[index].sector;
+        dst->end_sector = tracks[index].end_sector;
+        dst->type = tracks[index].is_audio ? TRACK_AUDIO : TRACK_MODE2_2352;
+        dst->audio_big_endian = tracks[index].audio_big_endian != 0;
+        dst->is_valid = 1;
+    }
+    g_track_count = track_count;
+    g_backend_lead_out = lead_out;
+    g_sector_read_cb = read_cb;
+    g_sector_read_user = user;
+    is_disk_loaded = 1;
+    DEBUGF("Virtual sector disc set: %d tracks", track_count);
     return 0;
 }
 
@@ -387,6 +436,9 @@ void Psyz_CdSetReadCB(PsyzCdReadCB cb) { disk_read_cb = cb; }
 #define CD_BUF_FRAMES                                                          \
     (SECTOR_SIZE * BUFFER_SECTORS / (N_CHANNELS * SAMPLE_SIZE))
 static FILE* track_file;
+static int backend_stream_sector;
+static int backend_stream_end;
+static int backend_stream_swap_audio;
 static s16 cd_buf[CD_BUF_FRAMES * N_CHANNELS];
 static size_t cd_buf_pos = 0;   // current read position (in frames)
 static size_t cd_buf_count = 0; // number of valid frames in buffer
@@ -402,17 +454,49 @@ static int xa_end_abs_sector = -1;
 // CD audio pull callback — called by SPU when its internal ring buffer
 // runs low. Fills `buf` with up to `max_frames` interleaved stereo frames.
 // One mutex lock per batch rather than per frame.
+static int stream_is_open(void) {
+    return track_file != NULL ||
+           (g_sector_read_cb != NULL && backend_stream_sector >= 0);
+}
+
+static size_t stream_read_sectors(void* output, size_t sectors) {
+    unsigned char* bytes = output;
+    size_t completed = 0;
+    if (track_file) {
+        return fread(output, SECTOR_SIZE, sectors, track_file);
+    }
+    while (completed < sectors && backend_stream_sector < backend_stream_end) {
+        unsigned char* sector = bytes + completed * SECTOR_SIZE;
+        if (g_sector_read_cb((unsigned int)backend_stream_sector, sector,
+                             g_sector_read_user) != SECTOR_SIZE) {
+            break;
+        }
+        if (backend_stream_swap_audio) {
+            size_t byte;
+            for (byte = 0; byte < SECTOR_SIZE; byte += 2) {
+                unsigned char first = sector[byte];
+                sector[byte] = sector[byte + 1];
+                sector[byte + 1] = first;
+            }
+        }
+        backend_stream_sector++;
+        completed++;
+    }
+    return completed;
+}
+
 static size_t cdda_pull_samples(short* buf, size_t max_frames) {
     size_t written = 0;
     int hit_eof = 0;
     Psyz_AudioLock();
-    if (!is_playing || !track_file) {
+    if (!is_playing || !stream_is_open()) {
         goto end;
     }
     while (written < max_frames) {
         // Refill file read buffer if consumed
         if (cd_buf_pos >= cd_buf_count) {
-            size_t nRead = fread(cd_buf, 1, sizeof(cd_buf), track_file);
+            size_t nRead = stream_read_sectors(cd_buf, BUFFER_SECTORS) *
+                           SECTOR_SIZE;
             if (nRead > 0) {
                 cd_buf_count = (int)(nRead / (N_CHANNELS * SAMPLE_SIZE));
                 cd_buf_pos = 0;
@@ -573,7 +657,7 @@ static int xa_read_and_decode_sector(void) {
             xa.cur_abs_sector + 1 >= xa_end_abs_sector) {
             return 0;
         }
-        const size_t n = fread(sector, 1, SECTOR_SIZE, track_file);
+        const size_t n = stream_read_sectors(sector, 1) * SECTOR_SIZE;
         if (n != SECTOR_SIZE) {
             return 0; // EOF or short read
         }
@@ -655,7 +739,7 @@ static size_t xa_pull_samples(short* buf, size_t max_frames) {
     size_t written = 0;
     int hit_eof = 0;
     Psyz_AudioLock();
-    if (!is_playing || !track_file || !xa.active) {
+    if (!is_playing || !stream_is_open() || !xa.active) {
         goto end;
     }
     // Prime Hermite ring on first call so we have y0..y2 valid.
@@ -749,6 +833,19 @@ static int open_track_at_cd_pos(void) {
         fclose(track_file);
         track_file = NULL;
     }
+    if (g_sector_read_cb) {
+        backend_stream_sector = sector;
+        backend_stream_end = track->end_sector;
+        backend_stream_swap_audio = track->audio_big_endian;
+        DEBUGF("opened virtual track %d at sector %d", track->track_num,
+               sector);
+        cdda_start_sector = sector;
+        cdda_frames_played = 0;
+        cdda_frames_pulled = 0;
+        cdda_energy = 0;
+        cdda_ended = 0;
+        return 0;
+    }
     FILE* file = fopen(track->file_path, "rb");
     if (!file) {
         ERRORF("failed to open audio file: %s", track->file_path);
@@ -765,6 +862,7 @@ static int open_track_at_cd_pos(void) {
     DEBUGF("opened track %s at sector %d (offset %d)", track->file_path, sector,
            sector_offset);
     track_file = file;
+    backend_stream_sector = -1;
     cdda_start_sector = sector;
     cdda_frames_played = 0;
     cdda_frames_pulled = 0;
@@ -831,6 +929,7 @@ static void psyz_stop() {
         fclose(track_file);
         track_file = NULL;
     }
+    backend_stream_sector = -1;
     cd_buf_pos = 0;
     cd_buf_count = 0;
     Psyz_AudioUnlock();
