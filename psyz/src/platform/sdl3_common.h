@@ -316,8 +316,11 @@ static void Sdl3Common_TimingInit(void) {
     perf_frequency = SDL_GetPerformanceFrequency();
     last_frame_time = SDL_GetPerformanceCounter();
     last_vsync_counter = last_frame_time;
-    target_frame_rate_explicit = false;
-    UpdateTargetFramerate(VSYNC_NTSC);
+    /* Applications commonly select PAL/NTSC timing before the first video
+     * call creates the window. Preserve that explicit choice while still
+     * initializing the platform's counters and driver VSync state. */
+    UpdateTargetFramerate(target_frame_rate_explicit ? target_frame_rate
+                                                     : VSYNC_NTSC);
 }
 
 static void WaitForNextFrame(void) {
