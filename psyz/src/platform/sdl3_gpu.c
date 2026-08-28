@@ -693,6 +693,7 @@ static void ApplyPendingInternalRes(void) {
 }
 
 static void PlatformBackend_Present(void) {
+    PsyzPresentSourceInfo present_source = {0};
     if (!sdl3_window && !InitPlatform()) {
         return;
     }
@@ -704,6 +705,13 @@ static void PlatformBackend_Present(void) {
         // animation) before the host renderer samples the VRAM texture, so
         // it never observes a half-applied transfer.
         SubmitCmd();
+        /* The source callback may submit GPU work of its own.  Do that before
+         * acquiring the command buffer used to draw the swapchain: SDL's
+         * Vulkan backend recycles command-buffer descriptor caches on submit,
+         * so nesting a submission while this buffer is open can leave the
+         * present draw with a stale cache. */
+        present_source.filter = SDL_GPU_FILTER_NEAREST;
+        present_source_cb(&present_source);
     }
 
     SDL_GPUCommandBuffer* cmd = AcquireCmd();
@@ -745,21 +753,20 @@ static void PlatformBackend_Present(void) {
                 src.h = VRAM_H * n;
                 game_aspect = (float)VRAM_W / (float)VRAM_H;
             } else if (present_source_cb) {
-                PsyzPresentSourceInfo info = {0};
-                info.filter = SDL_GPU_FILTER_NEAREST;
-                present_source_cb(&info);
-                if (info.texture && info.w > 0 && info.h > 0) {
-                    src.texture = info.texture;
+                if (present_source.texture && present_source.w > 0 &&
+                    present_source.h > 0) {
+                    src.texture = present_source.texture;
                     src.x = 0;
                     src.y = 0;
-                    src.w = info.w;
-                    src.h = info.h;
-                    source_w = info.w;
-                    source_h = info.h;
-                    game_aspect = info.aspect > 0.0f
-                                      ? info.aspect
-                                      : (float)info.w / (float)info.h;
-                    present_filter = info.filter;
+                    src.w = present_source.w;
+                    src.h = present_source.h;
+                    source_w = present_source.w;
+                    source_h = present_source.h;
+                    game_aspect = present_source.aspect > 0.0f
+                                      ? present_source.aspect
+                                      : (float)present_source.w /
+                                            (float)present_source.h;
+                    present_filter = present_source.filter;
                 }
             }
 
