@@ -1235,7 +1235,7 @@ void Draw_SetDisplayMode(DisplayMode* mode) {
     ApplyDisplayPendingChanges();
 
     double new_target_fps = mode->pal ? VSYNC_PAL : VSYNC_NTSC;
-    if (new_target_fps != target_frame_rate) {
+    if (!target_frame_rate_explicit && new_target_fps != target_frame_rate) {
         UpdateTargetFramerate(new_target_fps);
     }
 }

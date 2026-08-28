@@ -192,6 +192,9 @@ static unsigned limitless_vsync_units = 0;
 // frame pacing state
 static double target_frame_rate = VSYNC_NTSC;
 static double target_frame_time_us = 1000000.0 / VSYNC_NTSC;
+/* An application that selects a rate explicitly owns timing independently of
+ * the emulated display mode (whose PAL bit is often changed by the game). */
+static bool target_frame_rate_explicit = false;
 static Uint64 perf_frequency = 0;
 static Uint64 last_frame_time = 0;
 static Uint64 finish_time = 0;
@@ -302,6 +305,7 @@ static void UpdateTargetFramerate(double fps) {
 
 int Psyz_VideoSetTargetFramerate(double fps) {
     if (fps < 1.0 || fps > 1000.0) return -1;
+    target_frame_rate_explicit = true;
     UpdateTargetFramerate(fps);
     return 0;
 }
@@ -312,6 +316,7 @@ static void Sdl3Common_TimingInit(void) {
     perf_frequency = SDL_GetPerformanceFrequency();
     last_frame_time = SDL_GetPerformanceCounter();
     last_vsync_counter = last_frame_time;
+    target_frame_rate_explicit = false;
     UpdateTargetFramerate(VSYNC_NTSC);
 }
 
