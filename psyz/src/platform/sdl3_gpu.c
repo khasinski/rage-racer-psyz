@@ -486,6 +486,8 @@ bool InitPlatform() {
     swapchain_ok = SDL_ClaimWindowForGPUDevice(device, sdl3_window);
     if (!swapchain_ok) {
         WARNF("no swapchain, presentation disabled: %s", SDL_GetError());
+    } else if (!SDL_SetGPUAllowedFramesInFlight(device, 1)) {
+        WARNF("could not select low-latency presentation: %s", SDL_GetError());
     }
 
     if (!CreateGpuResources()) {
