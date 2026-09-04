@@ -32,6 +32,7 @@ PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
 // initialization. Content reflects work submitted up to the previous
 // present; sample it only from work submitted before the current one.
 SDL_GPUTexture* Psyz_VideoGetVramTexture_SDL3GPU(void);
+SDL_GPUTexture* Psyz_VideoSnapshotVramTexture_SDL3GPU(void);
 
 #ifdef __cplusplus
 }

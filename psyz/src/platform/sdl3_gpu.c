@@ -84,8 +84,38 @@ PsyzPresentSourceCB_SDL3GPU Psyz_PresentSource_SDL3GPU(
     return prev;
 }
 
+static SDL_GPUCommandBuffer* AcquireCmd(void);
+static void SubmitCmd(void);
+
 SDL_GPUTexture* Psyz_VideoGetVramTexture_SDL3GPU(void) {
     return vram_render;
+}
+
+SDL_GPUTexture* Psyz_VideoSnapshotVramTexture_SDL3GPU(void) {
+    SDL_GPUCommandBuffer* cmd;
+    SDL_GPUCopyPass* copy;
+    const SDL_GPUTextureLocation source = {.texture = vram_render};
+    const SDL_GPUTextureLocation destination = {.texture = vram_sample};
+
+    if (!device || !vram_render || !vram_sample) {
+        return NULL;
+    }
+    /* The modern renderer replays a captured packet list more than once
+     * while interpolating a logic tick.  Do not leave those packets sampling
+     * the live PS1 render target: later GP0 work may already be queued for it.
+     * Freeze the complete texture pages and CLUTs in the backend's existing
+     * sample mirror, then let every presentation of that captured frame read
+     * the same image. */
+    SubmitCmd();
+    cmd = AcquireCmd();
+    if (!cmd) return NULL;
+    copy = SDL_BeginGPUCopyPass(cmd);
+    if (!copy) return NULL;
+    SDL_CopyGPUTextureToTexture(copy, &source, &destination,
+                               VRAM_W, VRAM_H, 1, true);
+    SDL_EndGPUCopyPass(copy);
+    SubmitCmd();
+    return vram_sample;
 }
 
 static SDL_GPUCommandBuffer* AcquireCmd(void) {
