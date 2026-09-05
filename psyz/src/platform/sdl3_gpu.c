@@ -10,6 +10,11 @@
 #include "../internal.h"
 #include <SDL3/SDL.h>
 #include "sdl3_common.h"
+#include "texture_sample.h"
+#include "texture_span.h"
+#include "texture_triangle.h"
+#include "triangle_coverage.h"
+#include "vram_read_cache.h"
 
 #include "shaders/psx_vert_spv.h"
 #include "shaders/psx_frag_spv.h"
@@ -31,6 +36,7 @@ typedef struct {
 #define VRAM_BYTES (VRAM_W * VRAM_H * 4)
 
 static SDL_GPUDevice* device = NULL;
+static VramReadCache vram_read_cache;
 static bool swapchain_ok = false;
 static SDL_GPUTexture* vram_render = NULL;
 static SDL_GPUTexture* vram_sample = NULL;
@@ -512,6 +518,15 @@ bool InitPlatform() {
         return false;
     }
 
+    /* Complete the X11 map handshake before Vulkan WSI starts consuming
+     * window events. Showing the hidden window after claiming its swapchain
+     * can leave X11_ShowWindow waiting forever for a MapNotify. */
+    if (!SDL_ShowWindow(sdl3_window)) {
+        ERRORF("SDL_ShowWindow: %s", SDL_GetError());
+        return false;
+    }
+    is_window_visible = true;
+
     // useful for offscreen rendering with SDL_VIDEODRIVER=offscreen
     swapchain_ok = SDL_ClaimWindowForGPUDevice(device, sdl3_window);
     if (!swapchain_ok) {
@@ -570,6 +585,7 @@ static void MarkVramDirty(SDL_Rect r) {
     if (x1 <= x0 || y1 <= y0) {
         return;
     }
+    VramReadCacheInvalidate(&vram_read_cache, x0, y0, x1 - x0, y1 - y0);
     if (vram_dirty.w <= 0 || vram_dirty.h <= 0) {
         vram_dirty = (SDL_Rect){x0, y0, x1 - x0, y1 - y0};
         return;
@@ -724,6 +740,7 @@ static void ApplyPendingInternalRes(void) {
 
 static void PlatformBackend_Present(void) {
     PsyzPresentSourceInfo present_source = {0};
+    bool queued_present = false;
     if (!sdl3_window && !InitPlatform()) {
         return;
     }
@@ -742,6 +759,9 @@ static void PlatformBackend_Present(void) {
          * present draw with a stale cache. */
         present_source.filter = SDL_GPU_FILTER_NEAREST;
         present_source_cb(&present_source);
+        /* A host may pace presentation independently of emulated VBlank.
+         * Do not queue a duplicate image at a logic-only tick. */
+        if (present_source.skip_present && !debug_show_vram) return;
     }
 
     SDL_GPUCommandBuffer* cmd = AcquireCmd();
@@ -763,6 +783,7 @@ static void PlatformBackend_Present(void) {
             WARNF("SDL_WaitAndAcquireGPUSwapchainTexture: %s", SDL_GetError());
         }
         if (swapchain) {
+            queued_present = true;
             const Uint32 n = internal_res;
             SDL_GPUBlitRegion src = {
                 .texture = GetRenderTarget(),
@@ -860,9 +881,11 @@ static void PlatformBackend_Present(void) {
     }
     finish_time = SDL_GetPerformanceCounter();
     SubmitCmd();
+    if (queued_present) gpu_stats.presented_frames++;
 }
 
 static void QuitPlatform(void) {
+    VramReadCacheReset(&vram_read_cache);
     if (overlay_destroy_cb) {
         overlay_destroy_cb();
     }
@@ -1275,19 +1298,6 @@ int Draw_ExequeSync() { return 0; }
 // optimization to avoid sampling the VRAM on an untextured batch draw
 static bool batch_has_texture = false;
 
-typedef struct {
-    int x, y;
-} RasterPoint;
-
-typedef struct {
-    int x_start, x_end;
-    double x_left, x_right;
-    double u_left, u_right;
-    double v_left, v_right;
-    double r_left, r_right;
-    double g_left, g_right;
-    double b_left, b_right;
-} RasterTextureSpan;
 
 static bool PsxFlatTriangleSpan(const RasterPoint input[3], int y,
                                 int* x_start, int* x_end) {
@@ -1331,182 +1341,41 @@ static bool PsxFlatTriangleSpan(const RasterPoint input[3], int y,
     return *x_start <= *x_end;
 }
 
-static long long RasterEdge(RasterPoint a, RasterPoint b, int x, int y) {
-    return (long long)(b.x - a.x) * (y - a.y) -
-           (long long)(b.y - a.y) * (x - a.x);
+static bool ModernTriangleContains(const PreparedTriangleCoverage *p, int x, int y) {
+    return TriangleCoverageContains(p, x, y);
 }
 
-static bool ModernTriangleContains(const RasterPoint p[3], int x, int y) {
-    long long e0 = RasterEdge(p[0], p[1], x, y);
-    long long e1 = RasterEdge(p[1], p[2], x, y);
-    long long e2 = RasterEdge(p[2], p[0], x, y);
-    long long area = RasterEdge(p[0], p[1], p[2].x, p[2].y);
-    if (area == 0) return false;
-    /* A sample exactly at a polygon vertex touches two directed edges. Metal
-     * can reject that endpoint even when the individual edge predicates below
-     * are inclusive; treating it as uncovered is safe for the opaque
-     * compatibility path and lets the PS1 span decide the final texel. */
-    if ((e0 == 0) + (e1 == 0) + (e2 == 0) >= 2) return false;
-    for (int i = 0; i < 3; i++) {
-        long long edge = i == 0 ? e0 : i == 1 ? e1 : e2;
-        RasterPoint a = p[i];
-        RasterPoint b = p[(i + 1) % 3];
-        if (area > 0) {
-            if (edge < 0) return false;
-            if (edge == 0 && !((b.y < a.y) ||
-                               (b.y == a.y && b.x > a.x))) return false;
-        } else {
-            if (edge > 0) return false;
-            if (edge == 0 && !((b.y > a.y) ||
-                               (b.y == a.y && b.x < a.x))) return false;
-        }
-    }
-    return true;
+static PreparedTextureTriangle PrepareTextureTriangle(const Vertex input[3]) {
+    TextureTriangleVertex vertices[3];
+    for (int i = 0; i < 3; ++i)
+        vertices[i] = (TextureTriangleVertex){
+            input[i].x, input[i].y, input[i].u, input[i].v,
+            input[i].r, input[i].g, input[i].b};
+    return TextureTrianglePrepare(vertices, draw_offset.x, draw_offset.y);
 }
 
-static bool PsxTextureTriangleSpan(const Vertex input[3], int y,
-                                   RasterTextureSpan* span) {
-    Vertex v[3] = {input[0], input[1], input[2]};
-    for (int i = 1; i < 3; i++) {
-        Vertex key = v[i];
-        int j = i;
-        while (j > 0 && v[j - 1].y + draw_offset.y >
-                            key.y + draw_offset.y) {
-            v[j] = v[j - 1];
-            j--;
-        }
-        v[j] = key;
-    }
-    int y0 = v[0].y + draw_offset.y;
-    int y1 = v[1].y + draw_offset.y;
-    int y2 = v[2].y + draw_offset.y;
-    if (y2 == y0 || y < y0 || y > y2) return false;
-
-    double t1;
-    if (y < y1) {
-        if (y1 == y0) return false;
-        t1 = (double)(y - y0) / (double)(y1 - y0);
-        span->x_left = v[0].x + draw_offset.x + (v[1].x - v[0].x) * t1;
-        span->u_left = v[0].u + (v[1].u - v[0].u) * t1;
-        span->v_left = v[0].v + (v[1].v - v[0].v) * t1;
-        span->r_left = (int)(v[0].r + (v[1].r - v[0].r) * t1);
-        span->g_left = (int)(v[0].g + (v[1].g - v[0].g) * t1);
-        span->b_left = (int)(v[0].b + (v[1].b - v[0].b) * t1);
-    } else {
-        if (y2 == y1) return false;
-        t1 = (double)(y - y1) / (double)(y2 - y1);
-        span->x_left = v[1].x + draw_offset.x + (v[2].x - v[1].x) * t1;
-        span->u_left = v[1].u + (v[2].u - v[1].u) * t1;
-        span->v_left = v[1].v + (v[2].v - v[1].v) * t1;
-        span->r_left = (int)(v[1].r + (v[2].r - v[1].r) * t1);
-        span->g_left = (int)(v[1].g + (v[2].g - v[1].g) * t1);
-        span->b_left = (int)(v[1].b + (v[2].b - v[1].b) * t1);
-    }
-    double t2 = (double)(y - y0) / (double)(y2 - y0);
-    span->x_right = v[0].x + draw_offset.x + (v[2].x - v[0].x) * t2;
-    span->u_right = v[0].u + (v[2].u - v[0].u) * t2;
-    span->v_right = v[0].v + (v[2].v - v[0].v) * t2;
-    span->r_right = (int)(v[0].r + (v[2].r - v[0].r) * t2);
-    span->g_right = (int)(v[0].g + (v[2].g - v[0].g) * t2);
-    span->b_right = (int)(v[0].b + (v[2].b - v[0].b) * t2);
-    if (span->x_left > span->x_right) {
-        double swap = span->x_left;
-        span->x_left = span->x_right;
-        span->x_right = swap;
-        swap = span->u_left;
-        span->u_left = span->u_right;
-        span->u_right = swap;
-        swap = span->v_left;
-        span->v_left = span->v_right;
-        span->v_right = swap;
-        swap = span->r_left;
-        span->r_left = span->r_right;
-        span->r_right = swap;
-        swap = span->g_left;
-        span->g_left = span->g_right;
-        span->g_right = swap;
-        swap = span->b_left;
-        span->b_left = span->b_right;
-        span->b_right = swap;
-    }
-    span->x_start = (int)ceil(span->x_left);
-    span->x_end = (int)floor(span->x_right);
-    return span->x_start <= span->x_end;
+static bool PsxTextureTriangleSpan(const PreparedTextureTriangle *triangle,
+                                   int y, RasterTextureSpan *span) {
+    return TextureTriangleSpanAt(triangle, y, span);
 }
 
-static void PsxTextureSpanSample(const RasterTextureSpan* span, int x,
+static void PsxTextureSpanSample(const PreparedTextureSpan* span, int x,
                                  u16* u, u16* v, u8* r, u8* g, u8* b) {
-    double width = span->x_right - span->x_left;
-    double start_t = width > 0.0 ?
-        (span->x_start - span->x_left) / width : 0.0;
-    double start_u = span->u_left +
-        (span->u_right - span->u_left) * start_t;
-    double start_v = span->v_left +
-        (span->v_right - span->v_left) * start_t;
-    int fixed_u = (int)(start_u * 65536.0);
-    int fixed_v = (int)(start_v * 65536.0);
-    int step_u = width > 0.0 ?
-        (int)((span->u_right - span->u_left) / width * 65536.0) : 0;
-    int step_v = width > 0.0 ?
-        (int)((span->v_right - span->v_left) / width * 65536.0) : 0;
-    int fixed_r = (int)((span->r_left +
-        (span->r_right - span->r_left) * start_t) * 65536.0);
-    int fixed_g = (int)((span->g_left +
-        (span->g_right - span->g_left) * start_t) * 65536.0);
-    int fixed_b = (int)((span->b_left +
-        (span->b_right - span->b_left) * start_t) * 65536.0);
-    int step_r = width > 0.0 ?
-        (int)((span->r_right - span->r_left) / width * 65536.0) : 0;
-    int step_g = width > 0.0 ?
-        (int)((span->g_right - span->g_left) / width * 65536.0) : 0;
-    int step_b = width > 0.0 ?
-        (int)((span->b_right - span->b_left) / width * 65536.0) : 0;
-    fixed_u += (x - span->x_start) * step_u;
-    fixed_v += (x - span->x_start) * step_v;
-    fixed_r += (x - span->x_start) * step_r;
-    fixed_g += (x - span->x_start) * step_g;
-    fixed_b += (x - span->x_start) * step_b;
-    *u = (u16)((fixed_u >> 16) & 0xff);
-    *v = (u16)((fixed_v >> 16) & 0xff);
-    *r = (u8)CLAMP(fixed_r >> 16, 0, 255);
-    *g = (u8)CLAMP(fixed_g >> 16, 0, 255);
-    *b = (u8)CLAMP(fixed_b >> 16, 0, 255);
+    TextureSpanSample(span, x, u, v, r, g, b);
 }
 
-static bool ModernTextureSample(const Vertex p[3], int x, int y,
-                                u16* u, u16* v) {
-    double ax = p[0].x + draw_offset.x;
-    double ay = p[0].y + draw_offset.y;
-    double bx = p[1].x + draw_offset.x;
-    double by = p[1].y + draw_offset.y;
-    double cx = p[2].x + draw_offset.x;
-    double cy = p[2].y + draw_offset.y;
-    double determinant = (bx - ax) * (cy - ay) -
-                         (by - ay) * (cx - ax);
-    if (determinant == 0.0) {
-        *u = p[0].u;
-        *v = p[0].v;
-        return true;
+static TextureSamplePlane ModernTexturePrepare(const Vertex p[3]) {
+    TextureSampleVertex vertices[3];
+    for (int i = 0; i < 3; ++i) {
+        vertices[i] = (TextureSampleVertex){
+            p[i].x + draw_offset.x, p[i].y + draw_offset.y, p[i].u, p[i].v};
     }
-    double du_dx = ((p[1].u - p[0].u) * (cy - ay) -
-                    (p[2].u - p[0].u) * (by - ay)) / determinant;
-    double du_dy = ((bx - ax) * (p[2].u - p[0].u) -
-                    (cx - ax) * (p[1].u - p[0].u)) / determinant;
-    double dv_dx = ((p[1].v - p[0].v) * (cy - ay) -
-                    (p[2].v - p[0].v) * (by - ay)) / determinant;
-    double dv_dy = ((bx - ax) * (p[2].v - p[0].v) -
-                    (cx - ax) * (p[1].v - p[0].v)) / determinant;
-    double raw_u = p[0].u + du_dx * (x - ax) + du_dy * (y - ay);
-    double raw_v = p[0].v + dv_dx * (x - ax) + dv_dy * (y - ay);
-    int sample_u = (int)floor(raw_u);
-    int sample_v = (int)floor(raw_v);
-    *u = (u16)CLAMP(sample_u, 0, 255);
-    *v = (u16)CLAMP(sample_v, 0, 255);
-    /* A mathematically integral UV can arrive infinitesimally below the
-     * boundary after float interpolation. The fragment shader then floors to
-     * the previous texel, while the PS1 fixed accumulator remains exact. */
-    return fabs(raw_u - round(raw_u)) < 1e-7 ||
-           fabs(raw_v - round(raw_v)) < 1e-7;
+    return TextureSamplePrepare(vertices);
+}
+
+static bool ModernTextureSample(const TextureSamplePlane *plane, int x, int y,
+                                u16* u, u16* v) {
+    return TextureSampleAt(plane, x, y, u, v);
 }
 
 static bool TextureSamplesDiffer(const Vertex source[4], u16 expected_u,
@@ -1562,6 +1431,8 @@ static void Draw_FillFlatQuadScanlineGaps(const Vertex source[4]) {
     }
     const RasterPoint tri0[3] = {p[0], p[1], p[2]};
     const RasterPoint tri1[3] = {p[1], p[2], p[3]};
+    const PreparedTriangleCoverage coverage[2] = {
+        TriangleCoveragePrepare(tri0), TriangleCoveragePrepare(tri1)};
     int y_min = p[0].y, y_max = p[0].y;
     for (int i = 1; i < 4; i++) {
         if (p[i].y < y_min) y_min = p[i].y;
@@ -1593,8 +1464,8 @@ static void Draw_FillFlatQuadScanlineGaps(const Vertex source[4]) {
             bool expected =
                 ((span0 && x >= lo0 && x <= hi0) ||
                  (span1 && x >= lo1 && x <= hi1));
-            bool covered = ModernTriangleContains(tri0, x, y) ||
-                           ModernTriangleContains(tri1, x, y);
+            bool covered = ModernTriangleContains(&coverage[0], x, y) ||
+                           ModernTriangleContains(&coverage[1], x, y);
             if (expected && !covered)
                 Draw_EnqueueCompatibilityPixel(source, x, y, false, 0, 0,
                                                source[0].r, source[0].g,
@@ -1612,8 +1483,14 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
     }
     const RasterPoint points0[3] = {p[0], p[1], p[2]};
     const RasterPoint points1[3] = {p[1], p[2], p[3]};
+    const PreparedTriangleCoverage coverage[2] = {
+        TriangleCoveragePrepare(points0), TriangleCoveragePrepare(points1)};
     const Vertex vertices0[3] = {source[0], source[1], source[2]};
     const Vertex vertices1[3] = {source[1], source[2], source[3]};
+    const PreparedTextureTriangle raster[2] = {
+        PrepareTextureTriangle(vertices0), PrepareTextureTriangle(vertices1)};
+    const TextureSamplePlane planes[2] = {
+        ModernTexturePrepare(vertices0), ModernTexturePrepare(vertices1)};
     int y_min = p[0].y, y_max = p[0].y;
     for (int i = 1; i < 4; i++) {
         if (p[i].y < y_min) y_min = p[i].y;
@@ -1627,9 +1504,12 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
 
     for (int y = y_min; y <= y_max; y++) {
         RasterTextureSpan span0 = {0}, span1 = {0};
-        bool has0 = PsxTextureTriangleSpan(vertices0, y, &span0);
-        bool has1 = PsxTextureTriangleSpan(vertices1, y, &span1);
+        bool has0 = PsxTextureTriangleSpan(&raster[0], y, &span0);
+        bool has1 = PsxTextureTriangleSpan(&raster[1], y, &span1);
         if (!has0 && !has1) continue;
+        PreparedTextureSpan samples[2] = {{0}, {0}};
+        if (has0) samples[0] = TextureSpanPrepare(&span0);
+        if (has1) samples[1] = TextureSpanPrepare(&span1);
         int x_min = has0 ? span0.x_start : span1.x_start;
         int x_max = has0 ? span0.x_end : span1.x_end;
         if (has1) {
@@ -1658,20 +1538,20 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
             }
             bool expected0 = has0 && x >= span0.x_start && x <= span0.x_end;
             bool expected1 = has1 && x >= span1.x_start && x <= span1.x_end;
-            bool covered0 = ModernTriangleContains(points0, x, y);
-            bool covered1 = ModernTriangleContains(points1, x, y);
+            bool covered0 = ModernTriangleContains(&coverage[0], x, y);
+            bool covered1 = ModernTriangleContains(&coverage[1], x, y);
             if (!expected0 && !expected1) continue;
 
             /* The PS1 submits triangle 0 followed by triangle 1. If their
              * inclusive spans overlap, triangle 1 owns the final texel. */
-            const RasterTextureSpan* sample = expected1 ? &span1 : &span0;
+            const PreparedTextureSpan* sample = &samples[expected1 ? 1 : 0];
             u16 expected_u, expected_v;
             u8 expected_r, expected_g, expected_b;
             PsxTextureSpanSample(sample, x, &expected_u, &expected_v,
                                  &expected_r, &expected_g, &expected_b);
             bool correct = !covered0 && !covered1;
             if (!correct && !gouraud) {
-                const Vertex* modern = covered1 ? vertices1 : vertices0;
+                const TextureSamplePlane* modern = &planes[covered1 ? 1 : 0];
                 u16 modern_u, modern_v;
                 bool unstable = ModernTextureSample(modern, x, y,
                                                      &modern_u, &modern_v);
@@ -1689,11 +1569,18 @@ static void Draw_FillTexturedQuadScanlineGaps(const Vertex source[4],
 }
 
 static void Draw_CorrectOpaqueSpriteSamples(const Vertex source[4]) {
+    TextureSampleVertex sprite[4];
+    for (int i = 0; i < 4; ++i)
+        sprite[i] = (TextureSampleVertex){
+            source[i].x, source[i].y, source[i].u, source[i].v};
+    const bool unit_sprite = TextureSampleIsUnitSprite(sprite);
     const Vertex triangles[2][3] = {
         {source[0], source[1], source[2]},
         {source[1], source[3], source[2]},
     };
     RasterPoint points[2][3];
+    const TextureSamplePlane planes[2] = {
+        ModernTexturePrepare(triangles[0]), ModernTexturePrepare(triangles[1])};
     for (int triangle = 0; triangle < 2; triangle++) {
         for (int vertex = 0; vertex < 3; vertex++) {
             points[triangle][vertex].x =
@@ -1702,6 +1589,8 @@ static void Draw_CorrectOpaqueSpriteSamples(const Vertex source[4]) {
                 triangles[triangle][vertex].y + draw_offset.y;
         }
     }
+    const PreparedTriangleCoverage coverage[2] = {
+        TriangleCoveragePrepare(points[0]), TriangleCoveragePrepare(points[1])};
     const int x0 = source[0].x + draw_offset.x;
     const int y0 = source[0].y + draw_offset.y;
     const int x1 = source[3].x + draw_offset.x;
@@ -1712,15 +1601,19 @@ static void Draw_CorrectOpaqueSpriteSamples(const Vertex source[4]) {
         for (int x = x0; x < x1; x++) {
             if (x < draw_area_start.x || x > draw_area_end.x ||
                 x < 0 || x >= VRAM_W) continue;
-            int triangle = ModernTriangleContains(points[1], x, y) ? 1 : 0;
-            bool covered = ModernTriangleContains(points[triangle], x, y);
-            u16 modern_u = 0, modern_v = 0;
-            bool unstable = covered && ModernTextureSample(
-                triangles[triangle], x, y, &modern_u, &modern_v);
             u16 expected_u = (u16)(source[0].u + x - x0);
             u16 expected_v = (u16)(source[0].v + y - y0);
-            if (!covered || unstable || TextureSamplesDiffer(
-                    source, expected_u, expected_v, modern_u, modern_v)) {
+            bool correct = unit_sprite;
+            if (!correct) {
+                int triangle = ModernTriangleContains(&coverage[1], x, y) ? 1 : 0;
+                bool covered = ModernTriangleContains(&coverage[triangle], x, y);
+                u16 modern_u = 0, modern_v = 0;
+                bool unstable = covered && ModernTextureSample(
+                    &planes[triangle], x, y, &modern_u, &modern_v);
+                correct = !covered || unstable || TextureSamplesDiffer(
+                    source, expected_u, expected_v, modern_u, modern_v);
+            }
+            if (correct) {
                 Draw_EnqueueCompatibilityPixel(
                     source, x, y, true, expected_u, expected_v,
                     source[0].r, source[0].g, source[0].b);
@@ -2170,6 +2063,8 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
     SDL_UploadToGPUTexture(copy, &src, &dst, false);
     SDL_EndGPUCopyPass(copy);
     MarkVramDirty((SDL_Rect){rect->x, rect->y, rect->w, rect->h});
+    VramReadCacheWrite(&vram_read_cache, rect->x, rect->y, rect->w, rect->h,
+                      (const u16 *)p);
     SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
 }
 
@@ -2181,6 +2076,13 @@ void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
         return;
     }
     Draw_FlushBuffer(); // flush primitives before operating with the VRAM
+    bool cached = VramReadCacheRead(&vram_read_cache, rect->x, rect->y,
+                                   rect->w, rect->h, (u16 *)p);
+    /* Diagnostic oracle: force the original GPU readback on cache hits. */
+    static int verify_cache = -1;
+    if (verify_cache < 0)
+        verify_cache = getenv("PSYZ_VERIFY_VRAM_READ_CACHE") != NULL;
+    if (cached && !verify_cache) return;
 
     const size_t pixels = (size_t)rect->w * rect->h;
     u8* rgba = malloc(pixels * 4);
@@ -2189,7 +2091,18 @@ void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
     }
     if (DownloadVramRegionAsRGBA8888(
             rect->x, rect->y, rect->w, rect->h, rgba)) {
-        ConvertRgba8888ToRgb5551(rgba, (u16*)p, pixels);
+        if (cached) {
+            ConvertRgba8888ToRgb5551(rgba, (u16 *)rgba, pixels);
+            bool matches = memcmp(p, rgba, pixels * sizeof(u16)) == 0;
+            fprintf(stderr, "vram-read-cache verify=%s rect=%d,%d,%d,%d\n",
+                    matches ? "match" : "MISMATCH",
+                    rect->x, rect->y, rect->w, rect->h);
+            memcpy(p, rgba, pixels * sizeof(u16));
+        } else {
+            ConvertRgba8888ToRgb5551(rgba, (u16*)p, pixels);
+        }
+        VramReadCacheWrite(&vram_read_cache, rect->x, rect->y, rect->w, rect->h,
+                          (const u16 *)p);
     }
     free(rgba);
 }

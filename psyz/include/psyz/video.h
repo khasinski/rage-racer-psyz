@@ -83,6 +83,7 @@ typedef struct {
     double target_frame_time_us;     /**< target frame time */
     unsigned long long total_frames; /**< total frames rendered */
     int using_driver_vsync;          /**< 1 for VSync, 0 for limiter */
+    unsigned long long presented_frames; /**< swapchain images queued (SDL GPU) */
 } PsyzVideoStats;
 
 /**

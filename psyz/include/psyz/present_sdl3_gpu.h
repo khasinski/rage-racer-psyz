@@ -16,6 +16,7 @@ typedef struct PsyzPresentSourceInfo {
     Uint32 w, h;             /* source region, from (0,0) */
     float aspect;            /* presented aspect ratio; 0 means w/h */
     SDL_GPUFilter filter;    /* scaling filter, preset to NEAREST */
+    bool skip_present;      /* no swapchain work; VSync/input timing still runs */
 } PsyzPresentSourceInfo;
 
 // Called with `info` zeroed apart from `filter`. The debug whole-VRAM view
