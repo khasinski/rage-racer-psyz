@@ -78,6 +78,8 @@ static void spu_adpcm_decode_block(
 #define CD_RING_LOW_WATER 1024            // refill when short of N frames
 #define ENV_KEYON_DELAY_TICKS 6 // latency to simulate PS1 SPU latching a key-on
 
+void Psyz_PcmMusicMix(short* out, int frames);
+
 typedef enum {
     ADSR_ATTACK = 0,
     ADSR_DECAY,
@@ -864,6 +866,7 @@ void Psyz_SpuPullSamples(short* out, int num_frames) {
     for (int i = 0; i < num_frames; i++) {
         spu_tick(&out[i * 2]);
     }
+    Psyz_PcmMusicMix(out, num_frames);
 }
 
 unsigned long long Psyz_SpuReverbInputEnergy(void) {

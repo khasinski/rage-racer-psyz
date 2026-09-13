@@ -43,6 +43,7 @@ set(PSYZ_SOURCES
     src/psyz/libgte.c
     src/psyz/libgs.c
     src/psyz/libcd.c
+    src/psyz/pcm_music.c
     ../decomp/src/libcd/iso9660.c
     ../decomp/src/libcd/sys.c
     ../decomp/src/libcd/toc.c

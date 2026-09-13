@@ -66,6 +66,14 @@ unsigned long long Psyz_SeqVoiceStartCount(void);
 unsigned long long Psyz_SndPitchUpdateCount(void);
 void Psyz_AudioResetMetrics(void);
 
+/** Load a 44100 Hz, stereo, signed 16-bit PCM WAV into the music stream. */
+int Psyz_PcmMusicLoad(const char* path);
+void Psyz_PcmMusicUnload(void);
+void Psyz_PcmMusicPlay(int loop);
+void Psyz_PcmMusicStop(void);
+void Psyz_PcmMusicSetVolume(int volume);
+int Psyz_PcmMusicIsLoaded(void);
+
 /** Raw emulated SPU register base for native fixed-address game code. */
 void *Psyz_SpuRegisterBase(void);
 

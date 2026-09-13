@@ -163,9 +163,13 @@ void Psyz_AudioDestroy(void) {
     is_audio_init = false;
 }
 
-void Psyz_AudioLock() { SDL_LockMutex(mutex); }
+void Psyz_AudioLock() {
+    if (mutex) SDL_LockMutex(mutex);
+}
 
-void Psyz_AudioUnlock() { SDL_UnlockMutex(mutex); }
+void Psyz_AudioUnlock() {
+    if (mutex) SDL_UnlockMutex(mutex);
+}
 
 unsigned long long Psyz_AudioRenderedFrames(void) {
     return AudioCounterLoad(&rendered_frames);
