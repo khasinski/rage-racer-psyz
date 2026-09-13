@@ -271,7 +271,9 @@ static void ConfigureVSync(double target_fps) {
         return;
     }
 
-    SDL_DisplayID display_id = SDL_GetPrimaryDisplay();
+    SDL_DisplayID display_id = sdl3_window
+        ? SDL_GetDisplayForWindow(sdl3_window)
+        : SDL_GetPrimaryDisplay();
     const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(display_id);
     double detected_framerate = 60.0;
     if (mode && mode->refresh_rate > 0.0f) {
