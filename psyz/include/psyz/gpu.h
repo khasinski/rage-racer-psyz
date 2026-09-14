@@ -55,6 +55,11 @@ void Psyz_GpuDisplayCommand(unsigned int word);
 /** Attach game-defined diagnostic state to subsequently submitted GP0 lists. */
 void Psyz_GpuTraceContext(int scene, int timer);
 
+/* Select an auxiliary texture store for subsequent image uploads. Context
+ * zero is the emulated PS1 VRAM; context one is host-only and sampleable by
+ * primitives carrying the matching private tpage flag. */
+void Psyz_GpuTextureUploadContext(int context);
+
 #ifdef __cplusplus
 }
 #endif

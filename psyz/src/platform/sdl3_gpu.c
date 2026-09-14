@@ -45,6 +45,8 @@ static SDL_GPUTexture* vram_render = NULL;
 static VramSampleMask sample_dirty;
 static bool external_vram_handle;
 static SDL_GPUTexture* vram_sample = NULL;
+static SDL_GPUTexture* auxiliary_vram = NULL;
+static int texture_upload_context;
 static SDL_GPUSampler* vram_sampler = NULL;
 static SDL_GPUSampler* present_nearest_sampler = NULL;
 static SDL_GPUSampler* present_linear_sampler = NULL;
@@ -358,7 +360,8 @@ static bool CreateGpuResources(void) {
     SDL_GPUTextureCreateInfo sample_info = render_info;
     sample_info.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
     vram_sample = SDL_CreateGPUTexture(device, &sample_info);
-    if (!vram_render || !vram_sample) {
+    auxiliary_vram = SDL_CreateGPUTexture(device, &sample_info);
+    if (!vram_render || !vram_sample || !auxiliary_vram) {
         ERRORF("SDL_CreateGPUTexture: %s", SDL_GetError());
         return false;
     }
@@ -948,6 +951,10 @@ static void QuitPlatform(void) {
         if (vram_sample) {
             SDL_ReleaseGPUTexture(device, vram_sample);
             vram_sample = NULL;
+        }
+        if (auxiliary_vram) {
+            SDL_ReleaseGPUTexture(device, auxiliary_vram);
+            auxiliary_vram = NULL;
         }
         if (scaled_vram_render) {
             SDL_ReleaseGPUTexture(device, scaled_vram_render);
@@ -2172,7 +2179,7 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
         .rows_per_layer = rect->h,
     };
     const SDL_GPUTextureRegion dst = {
-        .texture = vram_render,
+        .texture = texture_upload_context == 1 ? auxiliary_vram : vram_render,
         .x = (Uint32)rect->x,
         .y = (Uint32)rect->y,
         .w = rect->w,
@@ -2181,10 +2188,16 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
     };
     SDL_UploadToGPUTexture(copy, &src, &dst, false);
     SDL_EndGPUCopyPass(copy);
-    MarkVramDirty((SDL_Rect){rect->x, rect->y, rect->w, rect->h});
-    VramReadCacheWrite(&vram_read_cache, rect->x, rect->y, rect->w, rect->h,
-                      (const u16 *)p);
-    SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
+    if (texture_upload_context == 0) {
+        MarkVramDirty((SDL_Rect){rect->x, rect->y, rect->w, rect->h});
+        VramReadCacheWrite(&vram_read_cache, rect->x, rect->y, rect->w,
+                           rect->h, (const u16 *)p);
+        SyncNativeVramToScaled(rect->x, rect->y, rect->w, rect->h);
+    }
+}
+
+void Psyz_GpuTextureUploadContext(int context) {
+    texture_upload_context = context == 1 ? 1 : 0;
 }
 
 void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
@@ -2387,9 +2400,6 @@ static void Draw_FlushBufferInternal(void) {
     SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
     const SDL_GPUBufferBinding ib = {.buffer = ibuf};
     SDL_BindGPUIndexBuffer(pass, &ib, SDL_GPU_INDEXELEMENTSIZE_16BIT);
-    const SDL_GPUTextureSamplerBinding sampler_binding = {
-        .texture = vram_sample, .sampler = vram_sampler};
-    SDL_BindGPUFragmentSamplers(pass, 0, &sampler_binding, 1);
     const float offset_ubo[4] = {
         (float)draw_offset.x, (float)draw_offset.y, 0, 0};
     SDL_PushGPUVertexUniformData(cmd, 0, offset_ubo, sizeof(offset_ubo));
@@ -2398,18 +2408,31 @@ static void Draw_FlushBufferInternal(void) {
     const int prim_size = 3;
     int start = 0;
     bool cur_subtract = false;
+    bool cur_auxiliary = false;
     bool pipeline_bound = false;
+    bool sampler_bound = false;
     while (start < n_indices) {
         Vertex* v = &vertex_buf[index_buf[start]];
         bool need_subtract = is_subtract_abr(v);
+        bool need_auxiliary = (v->t & TPAGE_AUX_TEXTURE) != 0;
         int end = start + prim_size;
         while (end < n_indices) {
             v = &vertex_buf[index_buf[end]];
             bool next_subtract = is_subtract_abr(v);
-            if (next_subtract != need_subtract) {
+            bool next_auxiliary = (v->t & TPAGE_AUX_TEXTURE) != 0;
+            if (next_subtract != need_subtract ||
+                next_auxiliary != need_auxiliary) {
                 break;
             }
             end += prim_size;
+        }
+        if (!sampler_bound || need_auxiliary != cur_auxiliary) {
+            const SDL_GPUTextureSamplerBinding binding = {
+                .texture = need_auxiliary ? auxiliary_vram : vram_sample,
+                .sampler = vram_sampler};
+            SDL_BindGPUFragmentSamplers(pass, 0, &binding, 1);
+            cur_auxiliary = need_auxiliary;
+            sampler_bound = true;
         }
         if (!pipeline_bound || need_subtract != cur_subtract) {
             SDL_GPUGraphicsPipeline* pipe =
