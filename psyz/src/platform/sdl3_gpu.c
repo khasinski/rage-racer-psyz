@@ -2197,7 +2197,31 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
 }
 
 void Psyz_GpuTextureUploadContext(int context) {
-    texture_upload_context = context == 1 ? 1 : 0;
+    int next = context == 1 ? 1 : 0;
+
+    if (next == 1 && texture_upload_context != 1 && device &&
+        vram_render && auxiliary_vram) {
+        Draw_FlushBuffer();
+        SDL_GPUCommandBuffer* cmd = AcquireCmd();
+        if (cmd) {
+            const SDL_GPUBlitInfo blit = {
+                .source = {
+                    .texture = vram_render,
+                    .w = VRAM_W,
+                    .h = VRAM_H,
+                },
+                .destination = {
+                    .texture = auxiliary_vram,
+                    .w = VRAM_W,
+                    .h = VRAM_H,
+                },
+                .load_op = SDL_GPU_LOADOP_DONT_CARE,
+                .filter = SDL_GPU_FILTER_NEAREST,
+            };
+            SDL_BlitGPUTexture(cmd, &blit);
+        }
+    }
+    texture_upload_context = next;
 }
 
 void Draw_StoreImage(PS1_RECT* rect, u_long* p) {
