@@ -520,6 +520,7 @@ bool InitPlatform() {
     }
     is_platform_initialized = true; // don't re-initialize on failures
 
+    ConfigureTestWindow();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         ERRORF("SDL_Init: %s", SDL_GetError());
         return false;
@@ -545,17 +546,17 @@ bool InitPlatform() {
     /* Complete the X11 map handshake before Vulkan WSI starts consuming
      * window events. Showing the hidden window after claiming its swapchain
      * can leave X11_ShowWindow waiting forever for a MapNotify. */
-    if (!SDL_ShowWindow(sdl3_window)) {
+    if (!headless_window && !SDL_ShowWindow(sdl3_window)) {
         ERRORF("SDL_ShowWindow: %s", SDL_GetError());
         return false;
     }
-    is_window_visible = true;
+    is_window_visible = !headless_window;
 
     // useful for offscreen rendering with SDL_VIDEODRIVER=offscreen
-    swapchain_ok = SDL_ClaimWindowForGPUDevice(device, sdl3_window);
-    if (!swapchain_ok) {
+    swapchain_ok = !headless_window && SDL_ClaimWindowForGPUDevice(device, sdl3_window);
+    if (!swapchain_ok && !headless_window) {
         WARNF("no swapchain, presentation disabled: %s", SDL_GetError());
-    } else if (!SDL_SetGPUAllowedFramesInFlight(device, 1)) {
+    } else if (swapchain_ok && !SDL_SetGPUAllowedFramesInFlight(device, 1)) {
         WARNF("could not select low-latency presentation: %s", SDL_GetError());
     }
 
@@ -1254,13 +1255,13 @@ static void ApplyDisplayPendingChanges() {
     }
     ApplyPendingInternalRes();
     if (cur_display_size.x != display_size.x ||
-        cur_display_size.y != display_size.y || !is_window_visible) {
-        if (!is_window_visible) {
+        cur_display_size.y != display_size.y || (!is_window_visible && !headless_window)) {
+        if (!is_window_visible && !headless_window) {
             SetWindowLogicalSize(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
         }
         cur_display_size = display_size;
     }
-    if (!is_window_visible) {
+    if (!is_window_visible && !headless_window) {
         SDL_ShowWindow(sdl3_window);
         is_window_visible = true;
     }

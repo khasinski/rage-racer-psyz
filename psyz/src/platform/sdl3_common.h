@@ -46,6 +46,16 @@ STATIC_ASSERT(sizeof(PSYZ_TITLE) <= sizeof(window_title),
 // shared window/platform state
 static SDL_Window* sdl3_window = NULL;
 static bool is_window_visible = false;
+/* Render into the normal GPU targets without displaying a test window. */
+static bool headless_window;
+static void ConfigureTestWindow(void) {
+    headless_window = SDL_GetHintBoolean("PSYZ_HEADLESS", false);
+    if (headless_window) {
+        SDL_SetHint(SDL_HINT_MAC_BACKGROUND_APP, "1");
+        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_SHOWN, "0");
+        SDL_SetHint(SDL_HINT_WINDOW_ACTIVATE_WHEN_RAISED, "0");
+    }
+}
 static bool is_platform_initialized = false;
 static bool is_platform_init_successful = false;
 static bool quit_requested = false;
@@ -769,7 +779,7 @@ void Psyz_PadsPoll(void) {
 
 // Prefers exclusive fullscreen mode, fallback on borderless fullscreen
 static void SetFullScreen(bool isFullscreen) {
-    if (!sdl3_window) {
+    if (!sdl3_window || headless_window) {
         return;
     }
     if (is_fullscreen == isFullscreen) {

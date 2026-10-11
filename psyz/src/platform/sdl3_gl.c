@@ -318,6 +318,7 @@ bool InitPlatform() {
     // avoid re-initializing it continuously on failures
     is_platform_initialized = true;
 
+    ConfigureTestWindow();
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         ERRORF("SDL_Init: %s", SDL_GetError());
         return false;
@@ -838,8 +839,8 @@ static void ApplyDisplayPendingChanges() {
     }
     ApplyPendingInternalRes();
     if (cur_display_size.x != display_size.x ||
-        cur_display_size.y != display_size.y || !is_window_visible) {
-        if (!is_window_visible) {
+        cur_display_size.y != display_size.y || (!is_window_visible && !headless_window)) {
+        if (!is_window_visible && !headless_window) {
             SetWindowLogicalSize(DEFAULT_FRONT_W, DEFAULT_FRONT_H);
         }
 
@@ -848,7 +849,7 @@ static void ApplyDisplayPendingChanges() {
             uniform_resolution, (float)display_size.x, (float)display_size.y);
         BindDrawFbo();
     }
-    if (!is_window_visible) {
+    if (!is_window_visible && !headless_window) {
         SDL_ShowWindow(sdl3_window);
         is_window_visible = true;
 #ifdef __APPLE__
