@@ -1,5 +1,12 @@
 #ifndef MALLOC_H
 #define MALLOC_H
+#if defined(__psyz) && defined(__ANDROID__)
+/* Bionic's stdlib.h loads malloc through <malloc.h>. This header is earlier
+ * on the include path, and the port build defines __psyz, so the retail
+ * declarations below are skipped. Continue on to the NDK header or every
+ * libc allocation call is an implicit declaration. */
+#include_next <malloc.h>
+#endif
 #ifndef __psyz
 
 #include <stddef.h>

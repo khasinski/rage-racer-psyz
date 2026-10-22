@@ -882,9 +882,6 @@ static void PollEvents(void) {
                       SDL_GetScancodeName(event.key.scancode),
                       event.key.repeat ? 1 : 0);
             }
-            if (event.key.scancode == SDL_SCANCODE_ESCAPE) {
-                quit_requested = true;
-            }
             if (event.key.scancode == SDL_SCANCODE_F6) {
                 debug_show_vram ^= 1;
             }
