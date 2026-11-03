@@ -92,6 +92,7 @@ typedef struct {
     double target_frame_time_us;     /**< target frame time */
     unsigned long long total_frames; /**< total frames rendered */
     int using_driver_vsync;          /**< 1 for VSync, 0 for limiter */
+    unsigned long long presented_frames; /**< swapchain images queued (SDL GPU) */
 } PsyzVideoStats;
 
 typedef enum {
@@ -124,6 +125,9 @@ PsyzVsyncMode Psyz_VideoGetVsyncMode(void);
  * @return 0 on success, -1 if invalid mode
  */
 int Psyz_VideoSetVsyncMode(PsyzVsyncMode mode);
+
+/** Select the emulated video standard's base VBlank frequency. */
+int Psyz_VideoSetTargetFramerate(double fps);
 
 /**
  * @brief Get the current dithering mode
@@ -285,6 +289,18 @@ unsigned Psyz_VideoGetInternalResolution(void);
 int Psyz_VideoVSync(int mode);
 
 /**
+ * @brief Present the current frame between game VSync(0) calls
+ *
+ * Runs the platform present and event pump without advancing the VBlank
+ * counters or the frame limiter, so game timing derived from VSync(1) is
+ * unaffected. For host renderers that present interpolated frames while
+ * the game waits out its frame-sync interval.
+ *
+ * @return 0 on success
+ */
+int Psyz_VideoPresentIntermediate(void);
+
+/**
  * @brief Get frame timing statistics
  *
  * @param stats Output structure to fill
@@ -311,6 +327,30 @@ unsigned char* Psyz_VideoAllocCapturedFrame(int* w, int* h);
  * @return NULL on failure, or RGB888 buffer to be destroyed with free(ptr)
  */
 unsigned char* Psyz_VideoAllocVramDump(int* w, int* h);
+/* Capture the 320x240 VRAM page currently selected as the drawing target,
+ * rather than the page currently selected for display. Diagnostic only. */
+unsigned char* Psyz_VideoAllocCapturedDrawPage(int* w, int* h);
+
+/* Capture all 1024x512 PS1 VRAM pixels as little-endian RGB5551 words.
+ * Diagnostic only; caller owns the returned buffer. */
+unsigned short* Psyz_VideoAllocCapturedVram(int* w, int* h);
+
+typedef struct PsyzVideoCaptureState {
+    int draw_x, draw_y, draw_w, draw_h;
+    int display_x, display_y, display_w, display_h;
+} PsyzVideoCaptureState;
+
+/* Snapshot the page-selection state used by diagnostic captures. */
+int Psyz_VideoGetCaptureState(PsyzVideoCaptureState* state);
+
+/* Upload and vertically center one RGB24 frame in both 320x240 display pages. */
+int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h);
+
+/* Diagnostic entry point: execute an already canonicalized GP0 FIFO stream.
+ * This bypasses OT pointer parsing but uses the normal platform renderer. */
+int Psyz_GpuReplayBegin(void);
+int Psyz_GpuReplayPacket(const unsigned int* words, int count);
+int Psyz_GpuReplayEnd(void);
 
 #ifdef __cplusplus
 }

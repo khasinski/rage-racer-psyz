@@ -50,6 +50,10 @@ char _SsVmAlloc(short voice) {
         for (i = 0; i < _SsVmMaxVoice; i++) {
             _svm_voice[i].unk2++;
         }
+#ifdef __psyz
+        extern void Psyz_SndVoiceAllocated(int voice);
+        Psyz_SndVoiceAllocated(alloc);
+#endif
         _svm_voice[alloc].unk2 = 0;
         _svm_voice[alloc].priority = _svm_cur.tone_prior;
         if (_svm_voice[alloc].unk1b == 2) {

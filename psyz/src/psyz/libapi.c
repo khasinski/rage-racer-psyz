@@ -165,7 +165,7 @@ void ChangeClearPAD(long val) { (void)val; }
 
 void SystemError(char c, long n) {
     NOT_IMPLEMENTED;
-    ERRORF("SystemError('%c', 0x%X)", c, n);
+    ERRORF("SystemError('%c', 0x%lX)", c, (unsigned long)n);
 }
 
 struct DIRENTRY* my_firstfile(char* dirPath, struct DIRENTRY* firstEntry);

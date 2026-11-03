@@ -168,8 +168,8 @@
  * Key Status Constants
  *============================================================================*/
 
-#define SPU_ON_ENV_OFF 2 /**< Key on, envelope 0 */
-#define SPU_OFF_ENV_ON 3 /**< Key off, envelope not 0 */
+#define SPU_OFF_ENV_ON 2 /**< Key off, envelope not 0 */
+#define SPU_ON_ENV_OFF 3 /**< Key on, envelope 0 */
 
 /*============================================================================
  * Decoded Data Constants

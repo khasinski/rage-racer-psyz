@@ -16,8 +16,15 @@ layout(location = 11) flat in uvec4 texWindow;
 layout(set = 2, binding = 0) uniform sampler2D texVram;
 
 uvec2 resolveTexel() {
-    vec2 uv = rawUV + 1.0 / 512.0;
-    uvec2 texel = uvec2(clamp(floor(uv), vec2(0.0), vec2(255.0)));
+    // The PS1 rasterizer consumes the integer part of its fixed-point UV
+    // accumulator. Rounding to nearest moves coherent areas onto adjacent
+    // palette indices (often transparent/black index zero).
+    // Stabilize values which are mathematically integral but arrive a few
+    // float ULPs below the boundary after hardware interpolation. One 16.16
+    // accumulator unit cannot skip a distinct PS1 fixed-point value.
+    const vec2 fixedHalfUnit = vec2(1.0 / 65536.0);
+    uvec2 texel = uvec2(clamp(floor(rawUV + fixedHalfUnit),
+                              vec2(0.0), vec2(255.0)));
     return (texel & texWindow.xy) | texWindow.zw;
 }
 
@@ -40,7 +47,7 @@ vec3 applyDither(vec3 c) {
     if (dither == 0u) return c;
     int dx = int(gl_FragCoord.x) & 3;
     int dy = int(gl_FragCoord.y) & 3;
-    float off = ditherMatrix[dy][dx];
+    float off = ditherMatrix[dx][dy];
     vec3 c8 = c * 255.0 + off;
     vec3 c5 = clamp(floor(c8 / 8.0), 0.0, 31.0);
     return c5 / 31.0;
@@ -63,8 +70,9 @@ void main() {
     }
     // check for full transparency
     if (texColor == vec4(0, 0, 0, 0)) {
-        FragColor = vec4(0);
-        return;
+        // PS1 texel 0000h is a color key: it leaves the framebuffer untouched,
+        // even when the primitive itself is not using semi-transparency.
+        discard;
     }
     // check for setSemiTrans(p, 1)
     bool isSemiTrans = vertexColor.a < 0.75;
@@ -73,9 +81,8 @@ void main() {
     // PS1-accurate texture-color modulation: (tex5 * col8) >> 7, clamp to 31
     vec3 modColor;
     if (textureMode == 0u) {
-        // untextured: PS1 uses color directly, truncated to 15-bit
-        vec3 col8 = floor(vertexColor.rgb * 255.0 + 0.5);
-        modColor = dither != 0u ? col8 / 255.0 : floor(col8 / 8.0) / 31.0;
+        // untextured: PS1 uses color directly, no modulation
+        modColor = texColor.rgb * vertexColor.rgb;
     } else {
         vec3 tex5 = floor(texColor.rgb * 31.0 + 0.5);
         vec3 col8 = min(floor(vertexColor.rgb * 127.5 + 0.5), vec3(255.0));

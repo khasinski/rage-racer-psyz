@@ -30,11 +30,43 @@ typedef int (*PsyzCdReadCB)(struct PsyzCdRead* read);
  * @brief Set path to CUE file, simulating a CD loaded
  *
  * Passing a NULL will unset a previously set disk path.
+ * Every call stops the previous stream and disc-owned buffered audio, even
+ * when the new path fails. Serializes with the mixer; call on the lifecycle
+ * thread, not from a sector-read callback.
  *
  * @param diskPath Path to the CUE file, or NULL to unset
  * @return 0 on success, otherwise CUE parsing failed
  */
 int Psyz_CdSetDiskPath(const char* diskPath);
+
+typedef struct PsyzCdTrackInfo {
+    int sector;      /**< absolute INDEX 01 sector, excluding lead-in */
+    int end_sector;  /**< first sector after recorded track data */
+    int is_audio;
+    int audio_big_endian;
+} PsyzCdTrackInfo;
+
+typedef int (*PsyzCdSectorReadCB)(unsigned int sector, void* buffer,
+                                  void* user);
+
+/** Install a virtual raw-sector disc, used by compressed-image frontends.
+ * Stops/clears old playback even on failure. The callback/user are borrowed
+ * until the next mount/unmount returns; retire their storage only afterwards.
+ * Serializes with the mixer; do not call from the sector-read callback. */
+int Psyz_CdSetSectorBackend(const PsyzCdTrackInfo* tracks, int track_count,
+                            int lead_out_sector, PsyzCdSectorReadCB read_cb,
+                            void* user);
+
+/** Return the absolute INDEX 01 sector for a one-based CUE track. */
+int Psyz_CdGetTrackSector(int track);
+
+/**
+ * Limit XA streaming to sectors before an absolute disc sector.
+ *
+ * Pass a negative value to remove the limit. The limit is exclusive and only
+ * affects CdlReadN/CdlReadS XA playback; ordinary CD-DA playback is unchanged.
+ */
+void Psyz_CdSetXaEndSector(int sector);
 
 /**
  * @brief Simulate CD-ROM drive shell (lid) opening or closing
@@ -64,6 +96,23 @@ size_t Psyz_CdPullSamples(short* out, size_t numFrames);
  * @param cb Disk read callback, or NULL to clear
  */
 void Psyz_CdSetReadCB(PsyzCdReadCB cb);
+
+/**
+ * @brief Notify the emulated drive that a host-side data read is starting
+ *
+ * A real PlayStation has one optical pickup, so a data read interrupts
+ * CD-DA playback. Ports which satisfy disc-data reads outside libcd must call
+ * this before reading the data.
+ */
+void Psyz_CdBeginDataRead(void);
+
+/** Return non-zero while CD-DA or XA audio is actively playing. */
+int Psyz_CdAudioPlaying(void);
+unsigned long long Psyz_CdAudioFramesPulled(void);
+unsigned long long Psyz_CdAudioEnergy(void);
+
+/** Return non-zero after the active CD-DA track reaches its physical end. */
+int Psyz_CdAudioEnded(void);
 
 #ifdef __cplusplus
 }

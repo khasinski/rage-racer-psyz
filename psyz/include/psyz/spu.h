@@ -54,7 +54,8 @@ void Psyz_SpuWrite(unsigned int regOffset, unsigned short value);
  * @param reg_offset Offset relative to 0x1F801C00; valid range 0x000-0x1FF
  * @return 16-bit register value
  */
-unsigned short Psyz_SpuRead(unsigned int regOffset);
+unsigned short Psyz_SpuRead(unsigned int reg_offset);
+unsigned long long Psyz_SpuCdMixEnergy(void);
 
 /**
  * @brief Read back the current SPU transfer address
@@ -138,6 +139,17 @@ unsigned char* Psyz_SpuGetRam(void);
  * @param num_frames Number of stereo frames to generate
  */
 void Psyz_SpuPullSamples(short* out, int numFrames);
+
+/** Return the PsyQ key/envelope status (0..3) for one SPU voice. */
+int Psyz_SpuVoiceKeyStatus(int voice);
+
+/** Append host SPU key-on register snapshots to a CSV file; NULL disables. */
+int Psyz_SpuSetKeyOnTracePath(const char* path);
+
+/** Diagnostic energy entering and leaving the hardware reverb core. */
+unsigned long long Psyz_SpuReverbInputEnergy(void);
+unsigned long long Psyz_SpuReverbOutputEnergy(void);
+unsigned long long Psyz_SpuReverbTailFrames(void);
 
 #ifdef __cplusplus
 }

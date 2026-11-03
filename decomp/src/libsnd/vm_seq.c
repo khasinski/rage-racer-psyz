@@ -82,6 +82,10 @@ INCLUDE_ASM("asm/nonmatchings/libsnd/vm_seq", _SsVmGetSeqLVol);
 INCLUDE_ASM("asm/nonmatchings/libsnd/vm_seq", _SsVmGetSeqRVol);
 
 void _SsVmSeqKeyOff(s16 seq_sep_num) {
+#ifdef __psyz
+    extern void Psyz_SndSeqKeyOff(s16 seq_sep_num);
+    Psyz_SndSeqKeyOff(seq_sep_num);
+#endif
     u8 i;
 
     for (i = 0; i < _SsVmMaxVoice; i++) {

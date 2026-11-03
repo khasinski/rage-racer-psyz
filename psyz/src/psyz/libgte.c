@@ -2879,6 +2879,22 @@ void NormalColorCol(SVECTOR* v0, CVECTOR* v1, CVECTOR* v2) {
     Psyz_GteNormalColorCol(v0, v1, v2);
 }
 
+void NormalColor(SVECTOR* normal, CVECTOR* unused, CVECTOR* out) {
+    (void)unused;
+    Psyz_GteNormalColor(normal, out);
+}
+
+void NormalColor3(SVECTOR* a, SVECTOR* b, SVECTOR* c, CVECTOR* unused,
+                  CVECTOR* out0, CVECTOR* out1, CVECTOR* out2) {
+    (void)unused;
+    Psyz_GteNormalColor3(a, b, c, out0, out1, out2);
+}
+
+void NormalColorCol3(SVECTOR* a, SVECTOR* b, SVECTOR* c, CVECTOR* base,
+                     CVECTOR* out0, CVECTOR* out1, CVECTOR* out2) {
+    Psyz_GteNormalColorCol3(a, b, c, base, out0, out1, out2);
+}
+
 void NormalColorDpq(SVECTOR* v0, CVECTOR* v1, long p, CVECTOR* v2) {
     Psyz_GteNormalColorDpq(v0, v1, p, v2);
 }

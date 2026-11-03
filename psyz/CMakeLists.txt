@@ -57,6 +57,7 @@ set(PSYZ_SOURCES
     ../decomp/src/libcd/c_010.c
     ../decomp/src/libcd/cdread2.c
     ../decomp/src/libcd/cdrom.c
+    src/psyz/pcm_music.c
     ../decomp/src/libcd/iso9660.c
     ../decomp/src/libcd/sys.c
     ../decomp/src/libcd/toc.c
@@ -139,7 +140,7 @@ set(PSYZ_SOURCES
     ../decomp/src/libsnd/ssloop.c
     ../decomp/src/libsnd/ssopenp.c
     ../decomp/src/libsnd/ssopenpj.c
-    ../decomp/src/libsnd/ssopenq.c
+    # SsSeqOpen is provided by the host sequence player in libsnd.c.
     ../decomp/src/libsnd/ssopenqj.c
     ../decomp/src/libsnd/ssplay.c
     ../decomp/src/libsnd/ssquit.c

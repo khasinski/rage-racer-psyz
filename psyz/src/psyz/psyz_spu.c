@@ -2,6 +2,7 @@
 #include <psyz/log.h>
 #include <assert.h>
 #include <string.h>
+#include <stdio.h>
 #include "spu_voice.h"
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -42,6 +43,29 @@ static struct {
 
     u8 initialized;
 } spu;
+
+static FILE* spu_key_on_trace;
+static unsigned long long reverb_input_energy;
+static unsigned long long reverb_output_energy;
+static unsigned long long reverb_tail_frames;
+static unsigned long long cd_mix_energy;
+
+int Psyz_SpuSetKeyOnTracePath(const char* path) {
+    if (spu_key_on_trace) {
+        fclose(spu_key_on_trace);
+        spu_key_on_trace = NULL;
+    }
+    if (!path || !*path)
+        return 0;
+    spu_key_on_trace = fopen(path, "w");
+    if (!spu_key_on_trace)
+        return -1;
+    fputs("voice,address,pitch,left,right,adsr1,adsr2\n", spu_key_on_trace);
+    fflush(spu_key_on_trace);
+    return 0;
+}
+
+void Psyz_PcmMusicMix(short* out, int frames);
 
 u8* Psyz_SpuGetRam(void) { return spu.ram; }
 
@@ -123,6 +147,14 @@ void Psyz_SpuMemWrite(unsigned int offset, const void* src, unsigned int size) {
 static void spu_key_on_voice(int v) {
     VoiceState* vs = &spu.voice[v];
     unsigned wait = spu.ticks & 1;
+    if (spu_key_on_trace) {
+        volatile SPU_VOICE_REG* r = &_spu_RXX->rxx.voice[v];
+        fprintf(spu_key_on_trace, "%d,%u,%u,%d,%d,%u,%u\n", v,
+                (unsigned)r->addr, r->pitch, (short)r->volume.left,
+                (short)r->volume.right, r->adsr[0], r->adsr[1]);
+        fflush(spu_key_on_trace);
+    }
+
     spu_voice_key_on(vs, &_spu_RXX->rxx.voice[v], spu.ram);
     vs->hold_ticks += wait;
     vs->delay_ticks += wait;
@@ -130,6 +162,10 @@ static void spu_key_on_voice(int v) {
 }
 
 static void spu_key_off_voice(int v) {
+    if (spu_key_on_trace) {
+        fprintf(spu_key_on_trace, "%d,OFF\n", v);
+        fflush(spu_key_on_trace);
+    }
     spu.voice[v].key_off_wait = 1 + (spu.ticks & 1);
 }
 
@@ -376,13 +412,21 @@ static void spu_tick(short* out) {
         reverb_input_left = reverb_input_right = 0;
     }
 
+    reverb_input_energy += (unsigned)abs(reverb_input_left);
+    reverb_input_energy += (unsigned)abs(reverb_input_right);
     reverb_tick(clamp16(reverb_input_left >> 1),
                 clamp16(reverb_input_right >> 1), reverb_output);
+    reverb_output_energy += (unsigned)abs(reverb_output[0]);
+    reverb_output_energy += (unsigned)abs(reverb_output[1]);
+    if (!(reverb_input_left || reverb_input_right) &&
+        (reverb_output[0] || reverb_output[1])) reverb_tail_frames++;
     left_sum += (reverb_output[0] * spu_s16(rxx->rev_vol.left)) >> 14;
     right_sum += (reverb_output[1] * spu_s16(rxx->rev_vol.right)) >> 14;
 
     // Mix CD audio per SPUCNT and cd_vol registers.
     if (spucnt & SPU_CTRL_MASK_CD_AUDIO_ENABLE) {
+        cd_mix_energy += (unsigned)abs(cd_left);
+        cd_mix_energy += (unsigned)abs(cd_right);
         left_sum += (cd_left * rxx->cd_vol.left) >> 14;
         right_sum += (cd_right * rxx->cd_vol.right) >> 14;
     }
@@ -417,4 +461,24 @@ void Psyz_SpuPullSamples(short* out, int num_frames) {
     for (int i = 0; i < num_frames; i++) {
         spu_tick(&out[i * 2]);
     }
+    Psyz_PcmMusicMix(out, num_frames);
+}
+unsigned long long Psyz_SpuReverbInputEnergy(void) {
+    return reverb_input_energy;
+}
+
+unsigned long long Psyz_SpuCdMixEnergy(void) { return cd_mix_energy; }
+
+unsigned long long Psyz_SpuReverbOutputEnergy(void) {
+    return reverb_output_energy;
+}
+
+unsigned long long Psyz_SpuReverbTailFrames(void) {
+    return reverb_tail_frames;
+}
+int Psyz_SpuVoiceKeyStatus(int voice) {
+    if (voice < 0 || voice >= PSYZ_SPU_NUM_VOICES) return -1;
+    VoiceState* v = &spu.voice[voice];
+    if (!v->active || v->env_state == ADSR_OFF) return 0;
+    return v->key_off ? (v->env_vol ? 2 : 0) : (v->env_vol ? 1 : 3);
 }
