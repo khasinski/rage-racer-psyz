@@ -1173,35 +1173,38 @@ int Psyz_VideoUploadRgb24Frame(const unsigned char* pixels, int w, int h) {
     if (!cmd) return 0;
     u8* map = SDL_MapGPUTransferBuffer(device, tex_upload_transfer, true);
     if (!map) return 0;
+    /* A queued frame from the preceding scene can write into the movie's
+     * letterbox after the initial ClearImage. Publish both complete pages
+     * with each decoded image so stale menu pixels cannot survive there. */
+    memset(map, 0, (size_t)w * 240 * 4);
+    for (int i = 0; i < w * 240; i++) map[i * 4 + 3] = 255;
     for (int i = 0; i < w * h; i++) {
-        map[i * 4 + 0] = pixels[i * 3 + 0];
-        map[i * 4 + 1] = pixels[i * 3 + 1];
-        map[i * 4 + 2] = pixels[i * 3 + 2];
-        map[i * 4 + 3] = 255;
+        const int destination = (i + y_offset * w) * 4;
+        map[destination + 0] = pixels[i * 3 + 0];
+        map[destination + 1] = pixels[i * 3 + 1];
+        map[destination + 2] = pixels[i * 3 + 2];
     }
     SDL_UnmapGPUTransferBuffer(device, tex_upload_transfer);
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
     const SDL_GPUTextureTransferInfo src = {
         .transfer_buffer = tex_upload_transfer,
         .pixels_per_row = (Uint32)w,
-        .rows_per_layer = (Uint32)h,
+        .rows_per_layer = 240,
     };
     for (int page = 0; page < 2; page++) {
         const SDL_GPUTextureRegion dst = {
             .texture = vram_render,
             .x = 0,
-            .y = (Uint32)(page * 240 + y_offset),
+            .y = (Uint32)(page * 240),
             .w = (Uint32)w,
-            .h = (Uint32)h,
+            .h = 240,
             .d = 1,
         };
         SDL_UploadToGPUTexture(copy, &src, &dst, false);
     }
     SDL_EndGPUCopyPass(copy);
-    MarkVramDirty((SDL_Rect){0, y_offset, w, h});
-    MarkVramDirty((SDL_Rect){0, 240 + y_offset, w, h});
-    SyncNativeVramToScaled(0, y_offset, w, h);
-    SyncNativeVramToScaled(0, 240 + y_offset, w, h);
+    MarkVramDirty((SDL_Rect){0, 0, w, 480});
+    SyncNativeVramToScaled(0, 0, w, 480);
     return 1;
 }
 
