@@ -5,6 +5,7 @@
 #include <kernel.h>
 #include <libetc.h>
 #include <libgpu.h>
+#include <psyz/video.h>
 
 #include "ztest.h"
 
@@ -623,6 +624,47 @@ ZTEST(gpu, move_image_internal_res) {
     VSync(0);
     ASSERT_FRAME("move_image", 0, 1.0f);
 }
+
+#if !defined(__psx__) && !defined(__PSP__)
+ZTEST(gpu, mixed_size_queued_uploads_preserve_gpu_pixels) {
+    const size_t pixels = 1024u * 512u;
+    u_short *expected = malloc(pixels * sizeof(*expected));
+    u_short *palettes = malloc(512u * 16u * sizeof(*palettes));
+    u_short tile[17 * 17];
+    zassert_ptr_ne(NULL, expected);
+    zassert_ptr_ne(NULL, palettes);
+    for (size_t i = 0; i < pixels; ++i) expected[i] = 0x4210;
+    RECT full = {0, 0, 1024, 512};
+    LoadImage(&full, (u_long *)expected);
+    /* Cross the 1 KiB size-class boundary, then queue hundreds of small
+     * CLUTs without synchronizing. Every in-flight source must survive. */
+    for (unsigned i = 0; i < 17 * 17; ++i) tile[i] = (u_short)(1u | (i * 19u & 0x7fffu));
+    RECT middle = {64, 32, 17, 17};
+    LoadImage(&middle, (u_long *)tile);
+    for (unsigned i = 0; i < 512; ++i) {
+        RECT clut = {(short)((i % 64) * 16), (short)(480 + i / 64), 16, 1};
+        for (unsigned j = 0; j < 16; ++j)
+            palettes[i * 16 + j] = (u_short)(1u | ((i * 73u + j * 19u) & 0x7fffu));
+        LoadImage(&clut, (u_long *)(palettes + i * 16));
+    }
+    DrawSync(0);
+    /* Read the GPU directly, rather than StoreImage's CPU-side cache. */
+    int width, height;
+    u_short *actual = Psyz_VideoAllocCapturedVram(&width, &height);
+    zassert_ptr_ne(NULL, actual);
+    zassert_s32_eq(1024, width);
+    zassert_s32_eq(512, height);
+    for (unsigned y = 0; y < 17; ++y)
+        memcpy(expected + (32 + y) * 1024 + 64, tile + y * 17, 17 * sizeof(*tile));
+    for (unsigned i = 0; i < 512; ++i)
+        memcpy(expected + (480 + i / 64) * 1024 + (i % 64) * 16,
+               palettes + i * 16, 16 * sizeof(*palettes));
+    zassert_u8array_eq(expected, actual, pixels * sizeof(*expected));
+    free(actual);
+    free(palettes);
+    free(expected);
+}
+#endif
 
 ZTEST(gpu, disp_mask_preserves_vram) {
     u_short pattern[16 * 16];

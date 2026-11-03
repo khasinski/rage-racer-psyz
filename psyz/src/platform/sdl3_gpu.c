@@ -58,6 +58,11 @@ static SDL_GPUBuffer* ibuf = NULL;
 static SDL_GPUBuffer* clear_vbuf = NULL;
 static SDL_GPUTransferBuffer* vtx_transfer = NULL;
 static SDL_GPUTransferBuffer* tex_upload_transfer = NULL;
+/* LoadImage often uploads only a CLUT. Cycling a full 2 MiB VRAM transfer
+ * for every small upload retains gigabytes at a large asset-load peak.
+ * Separate size classes preserve in-flight copies without that amplification. */
+#define TEXTURE_UPLOAD_BUCKET_COUNT 12
+static SDL_GPUTransferBuffer* texture_upload_buckets[TEXTURE_UPLOAD_BUCKET_COUNT];
 static SDL_GPUTransferBuffer* tex_download_transfer = NULL;
 static SDL_GPUGraphicsPipeline* pipe_tri_add = NULL;
 static SDL_GPUGraphicsPipeline* pipe_tri_sub = NULL;
@@ -341,6 +346,24 @@ static SDL_GPUGraphicsPipeline* CreatePresentPipeline(
         ERRORF("SDL_CreateGPUGraphicsPipeline (present): %s", SDL_GetError());
     }
     return pipe;
+}
+
+static SDL_GPUTransferBuffer* TextureUploadBuffer(size_t bytes) {
+    if (bytes == 0 || bytes > VRAM_BYTES) return NULL;
+    Uint32 capacity = 1024;
+    unsigned bucket = 0;
+    while (capacity < bytes && bucket + 1 < TEXTURE_UPLOAD_BUCKET_COUNT) {
+        capacity *= 2;
+        bucket++;
+    }
+    if (!texture_upload_buckets[bucket]) {
+        const SDL_GPUTransferBufferCreateInfo info = {
+            .usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
+            .size = capacity,
+        };
+        texture_upload_buckets[bucket] = SDL_CreateGPUTransferBuffer(device, &info);
+    }
+    return texture_upload_buckets[bucket];
 }
 
 static bool CreateGpuResources(void) {
@@ -992,6 +1015,12 @@ static void QuitPlatform(void) {
         if (tex_upload_transfer) {
             SDL_ReleaseGPUTransferBuffer(device, tex_upload_transfer);
             tex_upload_transfer = NULL;
+        }
+        for (unsigned i = 0; i < TEXTURE_UPLOAD_BUCKET_COUNT; ++i) {
+            if (texture_upload_buckets[i]) {
+                SDL_ReleaseGPUTransferBuffer(device, texture_upload_buckets[i]);
+                texture_upload_buckets[i] = NULL;
+            }
         }
         if (tex_download_transfer) {
             SDL_ReleaseGPUTransferBuffer(device, tex_download_transfer);
@@ -2169,17 +2198,22 @@ void Draw_LoadImage(PS1_RECT* rect, u_long* p) {
     if (!cmd) {
         return;
     }
-    u8* map = SDL_MapGPUTransferBuffer(device, tex_upload_transfer, true);
+    SDL_GPUTransferBuffer* upload = TextureUploadBuffer((size_t)rect->w * rect->h * 4);
+    if (!upload) {
+        ERRORF("Cannot allocate VRAM upload transfer: %s", SDL_GetError());
+        return;
+    }
+    u8* map = SDL_MapGPUTransferBuffer(device, upload, true);
     if (!map) {
         ERRORF("SDL_MapGPUTransferBuffer: %s", SDL_GetError());
         return;
     }
     ConvertRgb5551ToRgba8888((const u16*)p, map, (size_t)rect->w * rect->h);
-    SDL_UnmapGPUTransferBuffer(device, tex_upload_transfer);
+    SDL_UnmapGPUTransferBuffer(device, upload);
 
     SDL_GPUCopyPass* copy = SDL_BeginGPUCopyPass(cmd);
     const SDL_GPUTextureTransferInfo src = {
-        .transfer_buffer = tex_upload_transfer,
+        .transfer_buffer = upload,
         .pixels_per_row = rect->w,
         .rows_per_layer = rect->h,
     };
