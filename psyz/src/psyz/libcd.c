@@ -859,7 +859,7 @@ static int open_track_at_cd_pos(void) {
         backend_stream_sector = sector;
         backend_stream_end = track->end_sector;
         backend_stream_swap_audio = track->audio_big_endian;
-        DEBUGF("opened virtual track %d at sector %d", track->track_num,
+        INFOF("opened virtual track %d at sector %d", track->track_num,
                sector);
         cdda_start_sector = sector;
         cdda_frames_played = 0;
@@ -881,7 +881,7 @@ static int open_track_at_cd_pos(void) {
         fclose(file);
         return -1;
     }
-    DEBUGF("opened track %s at sector %d (offset %d)", track->file_path, sector,
+    INFOF("opened track %s at sector %d (offset %d)", track->file_path, sector,
            sector_offset);
     track_file = file;
     backend_stream_sector = -1;
