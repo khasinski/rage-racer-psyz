@@ -925,6 +925,17 @@ static void SetFullScreen(bool isFullscreen) {
         sdl3_window, &wnd_size_in_pixels.w, &wnd_size_in_pixels.h);
 }
 
+int Psyz_VideoIsFullscreen(void) {
+    return sdl3_window && (SDL_GetWindowFlags(sdl3_window) & SDL_WINDOW_FULLSCREEN) != 0;
+}
+
+int Psyz_VideoSetFullscreen(int enabled) {
+    if (!sdl3_window || headless_window) return -1;
+    is_fullscreen = Psyz_VideoIsFullscreen();
+    SetFullScreen(enabled != 0);
+    return Psyz_VideoIsFullscreen() == (enabled != 0) ? 0 : -1;
+}
+
 static void PollEvents(void) {
     SDL_Event event;
     static bool test_key_tap_sent;
@@ -993,7 +1004,7 @@ static void PollEvents(void) {
                 debug_show_vram ^= 1;
             }
             if (event.key.scancode == SDL_SCANCODE_F4 && !event.key.repeat) {
-                SetFullScreen(!is_fullscreen);
+                Psyz_VideoSetFullscreen(!Psyz_VideoIsFullscreen());
             }
             break;
         case SDL_EVENT_KEY_UP:

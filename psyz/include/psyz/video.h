@@ -110,6 +110,9 @@ typedef enum {
  * @param str Window title string, truncated past 255 characters
  */
 void Psyz_SetTitle(const char* str);
+/* Shared with F4; returns 0 on success and -1 when unavailable. */
+int Psyz_VideoSetFullscreen(int enabled);
+int Psyz_VideoIsFullscreen(void);
 
 /**
  * @brief Get the current VSync mode
